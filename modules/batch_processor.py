@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple, Any, Union
 
 from modules.preprocessing import preprocess_image
 from modules.image_decomposition import perform_wavelet_transform
-from modules.feature_extraction import extract_features_from_wavelet
+from modules.feature_extractor import extract_features_from_wavelet
 from modules.utils import logger, clean_cuda_memory
 
 class OptimizedBatchProcessor:

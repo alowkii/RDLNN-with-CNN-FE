@@ -7,8 +7,7 @@ Provides exports for the main project modules
 from .rdlnn import RegressionDLNN
 from .data_handling import precompute_features, load_and_verify_features
 from .preprocessing import preprocess_image
-from .image_decomposition import perform_wavelet_transform
-from .feature_extraction import extract_features_from_wavelet, BatchFeatureExtractor
+from .feature_extractor import PDyWTCNNDetector, extract_features_from_wavelet
 from .batch_processor import OptimizedBatchProcessor
 from .utils import logger, plot_training_history, setup_logging, setup_signal_handlers
 
@@ -25,7 +24,8 @@ __all__ = [
     'logger',
     'plot_training_history',
     'setup_logging',
-    'setup_signal_handlers'
+    'setup_signal_handlers',
+    'PDyWTCNNDetector'
 ]
 
 # Version information

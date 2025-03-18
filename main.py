@@ -17,11 +17,11 @@ from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
 
 # Import modules
+# Import modules
 from modules.rdlnn import RegressionDLNN
 from modules.data_handling import precompute_features, load_and_verify_features
 from modules.preprocessing import preprocess_image
-from modules.image_decomposition import perform_wavelet_transform
-from modules.feature_extraction import extract_features_from_wavelet
+from modules.feature_extractor import PDyWTCNNDetector, extract_features_from_wavelet  # Updated import
 from modules.batch_processor import OptimizedBatchProcessor
 from modules.utils import setup_signal_handlers, plot_training_history, setup_logging, logger
 
@@ -73,15 +73,21 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
+    parser.add_argument('--localization_model_path', 
+                    type=str, 
+                    default='data/models/pdywt_localizer.pth',
+                    help='Path to localization model')
+                    
     parser.add_argument('--mode', 
-                        choices=['train', 'test', 'precompute', 'single', 'analyze'], 
+                        choices=['train', 'test', 'precompute', 'single', 'analyze', 'localize'], 
                         required=True, 
-                        help='Operating mode: train, test, precompute features, test single image, or analyze features')
+                        help='Operating mode: train, test, precompute, single, analyze, or localize')
     
     parser.add_argument('--input_dir', 
                         type=str,
                         help='Directory containing input images')
     
+        
     parser.add_argument('--image_path', 
                         type=str,
                         help='Path to single image for testing')
@@ -388,6 +394,60 @@ def test_mode(args: argparse.Namespace) -> None:
     
     logger.info(f"Results saved to {results_file}")
 
+def localize_mode(args: argparse.Namespace) -> None:
+    """Localize forgery in the input image or directory
+    
+    Args:
+        args: Command line arguments
+    """
+    from modules.feature_extractor import PDyWTCNNDetector
+    
+    # Initialize detector with models
+    detector = PDyWTCNNDetector(
+        model_path=args.model_path,
+        localization_model_path=args.localization_model_path
+    )
+    
+    if args.image_path:
+        # Process single image
+        logger.info(f"Localizing forgery in image: {args.image_path}")
+        result = detector.detect(args.image_path)
+        
+        if result['prediction'] == 1:
+            # Image detected as forged, perform localization
+            output_path = os.path.join(args.output_dir, f"{os.path.splitext(os.path.basename(args.image_path))[0]}_forgery_map.png")
+            localization_result = detector.localize(args.image_path, save_path=output_path)
+            
+            logger.info(f"Localization result saved to {output_path}")
+            if localization_result['region_proposals']:
+                logger.info(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
+        else:
+            logger.info("Image appears authentic, no localization performed.")
+    
+    elif args.input_dir:
+        # Process directory of images
+        image_files = [f for f in os.listdir(args.input_dir) 
+                      if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))]
+        
+        for image_file in image_files:
+            image_path = os.path.join(args.input_dir, image_file)
+            logger.info(f"Processing {image_path}")
+            
+            result = detector.detect(image_path)
+            
+            if result['prediction'] == 1:
+                # Image detected as forged, perform localization
+                output_path = os.path.join(args.output_dir, f"{os.path.splitext(image_file)[0]}_forgery_map.png")
+                localization_result = detector.localize(image_path, save_path=output_path)
+                
+                logger.info(f"Localization result saved to {output_path}")
+                if localization_result['region_proposals']:
+                    logger.info(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
+            else:
+                logger.info(f"{image_file} appears authentic, no localization performed.")
+    else:
+        logger.error("Error: Please provide either --image_path or --input_dir argument for localization")
+
 def test_single_image(args: argparse.Namespace) -> None:
     """Test the model on a single image
     
@@ -422,36 +482,27 @@ def test_single_image(args: argparse.Namespace) -> None:
     logger.info(f"Processing single image: {args.image_path}")
     start_time = time.time()
     
+    # Replace this code section in test_single_image function
     try:
+        # Initialize detector
+        detector = PDyWTCNNDetector()
+        
         # Preprocess the image
-        ycbcr_tensor = preprocess_image(args.image_path)
+        ycbcr_tensor = detector.preprocess_image(args.image_path)
         
         if ycbcr_tensor is None:
             logger.error("Error: Failed to preprocess image")
             return
         
-        # Add batch dimension
-        ycbcr_tensor = ycbcr_tensor.unsqueeze(0)
+        # Extract wavelet features
+        feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
         
-        # Apply wavelet transform
-        pdywt_coeffs = perform_wavelet_transform(ycbcr_tensor[0])
-        
-        # Extract features
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        feature_vector = extract_features_from_wavelet(
-            ycbcr_tensor, 
-            [pdywt_coeffs],
-            device=device,
-            batch_size=1,
-            use_fp16=args.fp16
-        )
-        
-        if feature_vector is None:
-            logger.error("Error: Failed to extract features")
-            return
+        # Get a fixed-length feature vector by average pooling
+        pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+        feature_vector = pooled_features.view(1, -1).cpu().numpy()
         
         # Make prediction
-        _, confidences = model.predict(feature_vector.cpu().numpy())
+        _, confidences = model.predict(feature_vector)
         
         # Apply threshold
         prediction = 1 if confidences[0] >= threshold else 0

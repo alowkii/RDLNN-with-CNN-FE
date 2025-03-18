@@ -8,10 +8,10 @@ import torch
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, List, Dict, Any, Optional
 from tqdm import tqdm
+import torch.nn.functional as F
 
 from modules.preprocessing import preprocess_image
-from modules.image_decomposition import perform_wavelet_transform
-from modules.feature_extraction import extract_features_from_wavelet
+from modules.feature_extractor import PDyWTCNNDetector, extract_features_from_wavelet
 from modules.utils import logger, clean_cuda_memory
 
 def precompute_features(directory: str, label=None, batch_size=16, num_workers=4, use_fp16=True, save_path=None) -> Dict[str, Any]:
@@ -38,6 +38,9 @@ def precompute_features(directory: str, label=None, batch_size=16, num_workers=4
     num_images = len(image_files)
     logger.info(f"Found {num_images} images in {directory}")
     
+    # Initialize detector for feature extraction
+    detector = PDyWTCNNDetector()
+    
     # Allocate results
     results = {
         'paths': [],
@@ -52,34 +55,52 @@ def precompute_features(directory: str, label=None, batch_size=16, num_workers=4
             batch_files = image_files[batch_idx:batch_end]
             batch_paths = [os.path.join(directory, f) for f in batch_files]
             
-            # Extract features for batch
-            batch_features = _process_image_batch(
-                batch_paths, 
-                device=device, 
-                num_workers=num_workers, 
-                batch_size=batch_size,
-                use_fp16=use_fp16
-            )
+            # Process each image in the batch
+            batch_features = []
+            valid_paths = []
             
-            if batch_features is not None:
-                results['paths'].extend(batch_paths)
-                results['features'].append(batch_features.cpu().numpy())
+            for img_path in batch_paths:
+                try:
+                    # Preprocess image
+                    ycbcr_tensor = detector.preprocess_image(img_path)
+                    if ycbcr_tensor is None:
+                        continue
+                        
+                    # Extract wavelet features
+                    feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
+                    
+                    # Get fixed-length feature vector
+                    pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                    feature_vector = pooled_features.view(-1).cpu().numpy()
+                    
+                    batch_features.append(feature_vector)
+                    valid_paths.append(img_path)
+                except Exception as e:
+                    logger.error(f"Error processing {img_path}: {e}")
+            
+            if batch_features:
+                # Stack features into a batch
+                features_array = np.vstack(batch_features)
+                
+                # Add to results
+                results['paths'].extend(valid_paths)
+                results['features'].append(features_array)
                 
                 # Add labels if provided
                 if label is not None:
-                    results['labels'].extend([label] * len(batch_paths))
+                    results['labels'].extend([label] * len(valid_paths))
             
-            # Update progress bar with the number of successfully processed images
+            # Update progress
             pbar.update(len(batch_paths))
             
-            # Clean up GPU memory after each batch
+            # Clean up GPU memory
             clean_cuda_memory()
     
-    # Combine features into a single array
+    # Combine all features
     if results['features']:
         results['features'] = np.vstack(results['features'])
         
-        # Save features if path provided
+        # Save if path provided
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             np.savez(
@@ -108,43 +129,46 @@ def _process_image_batch(image_paths: List[str], device: torch.device, num_worke
         Tensor of feature vectors for the batch or None if processing failed
     """
     try:
+        # Initialize detector
+        detector = PDyWTCNNDetector()
+        
+        # Process each image in the batch
+        batch_features = []
+        valid_paths = []
+        
         # Use ThreadPoolExecutor for parallel preprocessing
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            ycbcr_batch = list(executor.map(preprocess_image, image_paths))
+            ycbcr_batch = list(executor.map(detector.preprocess_image, image_paths))
         
-        # Filter out any None results
-        ycbcr_batch = [img for img in ycbcr_batch if img is not None]
-        
-        if not ycbcr_batch:
-            return None
-        
-        # Get consistent dimensions for batching
-        first_h, first_w = ycbcr_batch[0].shape[1], ycbcr_batch[0].shape[2]
-        ycbcr_batch = [img for img in ycbcr_batch if img.shape[1] == first_h and img.shape[2] == first_w]
-        
-        # Stack into a single batch tensor
-        if not ycbcr_batch:
-            return None
+        # Filter out any None results and extract features
+        for i, (img_path, ycbcr) in enumerate(zip(image_paths, ycbcr_batch)):
+            if ycbcr is None:
+                continue
                 
-        ycbcr_tensor = torch.stack(ycbcr_batch)  # [B, C, H, W]
+            # Extract wavelet features
+            try:
+                feature_tensor = detector.extract_wavelet_features(ycbcr)
+                
+                # Get fixed-length feature vector
+                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                feature_vector = pooled_features.squeeze()
+                
+                # Add to batch
+                if len(batch_features) == 0:
+                    # First feature, initialize tensor
+                    batch_features = torch.zeros((len(image_paths), feature_vector.size(0)), 
+                                                device=device)
+                    
+                batch_features[len(valid_paths)] = feature_vector
+                valid_paths.append(img_path)
+            except Exception as e:
+                logger.error(f"Error extracting features from {img_path}: {e}")
         
-        # Apply wavelet transform to each image in batch
-        pdywt_batch = []
-        for i in range(len(ycbcr_tensor)):
-            pdywt_coeffs = perform_wavelet_transform(ycbcr_tensor[i])
-            if pdywt_coeffs is not None:
-                pdywt_batch.append(pdywt_coeffs)
-        
-        # Extract features
-        feature_vectors = extract_features_from_wavelet(
-            ycbcr_tensor, 
-            pdywt_batch,
-            device=device,
-            batch_size=batch_size,
-            use_fp16=use_fp16
-        )
-        
-        return feature_vectors
+        if len(valid_paths) == 0:
+            return None
+            
+        # Return only the valid features
+        return batch_features[:len(valid_paths)]
         
     except Exception as e:
         logger.error(f"Error processing batch: {e}")
