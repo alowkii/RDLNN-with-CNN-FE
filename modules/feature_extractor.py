@@ -17,7 +17,7 @@ import cv2
 from typing import Dict, List, Tuple, Union, Optional
 
 from modules.utils import logger, clean_cuda_memory
-from tools.train_localization import SimpleLocalizationModel
+from modules.model import SimpleLocalizationModel
 
 
 class PDyWaveletTransform:
@@ -431,12 +431,14 @@ class PDyWTCNNDetector:
     Main class for PDyWT-CNN based forgery detection and localization
     """
     
+    # In modules/feature_extractor.py, modify the __init__ method of PDyWTCNNDetector
+
     def __init__(self, model_path=None, localization_model_path=None, use_gpu=True):
         """
         Initialize the detector
         
         Args:
-            model_path: Path to the pretrained WaveletCNN model
+            model_path: Path to the pretrained WaveletCNN or RegressionDLNN model
             localization_model_path: Path to the pretrained LocalizationCNN model
             use_gpu: Whether to use GPU acceleration if available
         """
@@ -446,37 +448,56 @@ class PDyWTCNNDetector:
         # Initialize detection model (auto-detect flat features model if needed)
         self.detection_model = None
         self.flat_feature_detector = None
+        self.rdlnn_model = None  # Add this line to store a RegressionDLNN model
         
         if model_path and os.path.exists(model_path):
             try:
-                # First try loading as WaveletCNN
-                self.detection_model = WaveletCNN().to(self.device)
-                self.detection_model.load_state_dict(torch.load(model_path, map_location=self.device))
-                logger.info(f"Loaded WaveletCNN detection model from {model_path}")
-            except Exception as e:
-                logger.info(f"Could not load as WaveletCNN, trying FlatFeatureDetector")
-                # If that fails, try loading as FlatFeatureDetector
+                # First try loading as RegressionDLNN
+                from modules.rdlnn import RegressionDLNN
                 try:
-                    # Try to determine input dim from file
-                    if model_path.endswith('.pth'):
-                        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
-                        self.detection_model.load_state_dict(checkpoint)
-                        # Check first layer weight shape to determine input dimension
-                        input_dim = None
-                        for key in checkpoint.keys():
-                            if 'weight' in key and '0' in key:  # First layer weight
-                                input_dim = checkpoint[key].shape[1]
-                                break
+                    self.rdlnn_model = RegressionDLNN.load(model_path)
+                    logger.info(f"Loaded RegressionDLNN model from {model_path}")
+                except Exception as rdlnn_error:
+                    logger.info(f"Could not load as RegressionDLNN: {rdlnn_error}")
                     
-                    # Default to 12 if can't determine
-                    if input_dim is None:
-                        input_dim = 12
-                    
-                    self.flat_feature_detector = FlatFeatureDetector(input_dim=input_dim).to(self.device)
-                    self.flat_feature_detector.load_state_dict(torch.load(model_path, map_location=self.device))
-                    logger.info(f"Loaded FlatFeatureDetector model with input dim {input_dim} from {model_path}")
-                except Exception as e2:
-                    logger.error(f"Could not load detection model: {e2}")
+                    # If RegressionDLNN fails, try loading as WaveletCNN
+                    try:
+                        self.detection_model = WaveletCNN().to(self.device)
+                        self.detection_model.load_state_dict(torch.load(model_path, map_location=self.device))
+                        logger.info(f"Loaded WaveletCNN detection model from {model_path}")
+                    except Exception as e:
+                        logger.info(f"Could not load as WaveletCNN, trying FlatFeatureDetector")
+                        # If that fails, try loading as FlatFeatureDetector
+                        try:
+                            # Try to determine input dim from file
+                            if model_path.endswith('.pth'):
+                                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                                # Check first layer weight shape to determine input dimension
+                                input_dim = None
+                                for key in checkpoint.keys():
+                                    if 'weight' in key and '0' in key:  # First layer weight
+                                        input_dim = checkpoint[key].shape[1]
+                                        break
+                            
+                            # Default to 12 if can't determine
+                            if input_dim is None:
+                                input_dim = 12
+                            
+                            self.flat_feature_detector = FlatFeatureDetector(input_dim=input_dim).to(self.device)
+                            self.flat_feature_detector.load_state_dict(torch.load(model_path, map_location=self.device))
+                            logger.info(f"Loaded FlatFeatureDetector model with input dim {input_dim} from {model_path}")
+                        except Exception as e2:
+                            logger.error(f"Could not load detection model: {e2}")
+            except ImportError:
+                logger.warning("Could not import RegressionDLNN, will try other model types")
+                # Try the remaining model types
+                try:
+                    self.detection_model = WaveletCNN().to(self.device)
+                    self.detection_model.load_state_dict(torch.load(model_path, map_location=self.device))
+                    logger.info(f"Loaded WaveletCNN detection model from {model_path}")
+                except Exception as e:
+                    # Same code as above for FlatFeatureDetector...
+                    logger.error(f"Could not load detection model: {e}")
         else:
             # Default to WaveletCNN if no model provided
             self.detection_model = WaveletCNN().to(self.device)
@@ -493,6 +514,8 @@ class PDyWTCNNDetector:
             self.detection_model.eval()
         if self.flat_feature_detector:
             self.flat_feature_detector.eval()
+        if self.rdlnn_model:  # Add this condition
+            pass  # The RegressionDLNN.load() already sets eval mode
         self.localization_model.eval()
         
         # Set threshold for classification
@@ -607,8 +630,27 @@ class PDyWTCNNDetector:
             # Extract wavelet features
             feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
             
-            # Decide which model to use
-            if self.detection_model:
+            # Check which model to use
+            if self.rdlnn_model:
+                # Handle RegressionDLNN model
+                # Get a fixed-length feature vector by average pooling
+                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                feature_vector = pooled_features.view(1, -1).cpu().numpy()
+                
+                # Use RegressionDLNN for prediction
+                predictions, probabilities = self.rdlnn_model.predict(feature_vector)
+                
+                # Get the prediction and probability for the first (only) sample
+                prediction = int(predictions[0])
+                probability = float(probabilities[0])
+                
+                return {
+                    'prediction': prediction,  # 1 = forged, 0 = authentic
+                    'probability': probability,
+                    'features': feature_vector[0]
+                }
+            
+            elif self.detection_model:
                 # Add batch dimension for CNN
                 feature_tensor = feature_tensor.unsqueeze(0).to(self.device)
                 
