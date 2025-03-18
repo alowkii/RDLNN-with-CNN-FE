@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
-from modules.pdywt_cnn import PDyWTCNNDetector
+from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, setup_logging
 
 

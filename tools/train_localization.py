@@ -13,7 +13,7 @@ from PIL import Image
 from tqdm import tqdm
 import glob
 
-from modules.pdywt_cnn import PDyWTCNNDetector
+from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, setup_logging
 
 # Define a simpler localization model

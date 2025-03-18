@@ -14,7 +14,7 @@ from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import time
 
-from modules.pdywt_cnn import PDyWTCNNDetector
+from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, setup_logging
 
 
