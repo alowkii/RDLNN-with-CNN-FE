@@ -1,17 +1,22 @@
 # Core packages
-torch>=1.10.0
-torchvision>=0.11.0
-numpy>=1.20.0
-scikit-learn>=1.0.0
-matplotlib>=3.4.0
-Pillow>=9.0.0
-tqdm>=4.60.0
+torch
+torchvision
+numpy
+scikit-learn
+matplotlib
+Pillow
+tqdm
 
 # Image processing
-opencv-python>=4.5.5
+opencv-python
 
 # Wavelet transform
-PyWavelets>=1.2.0
+PyWavelets
+
+# API server dependencies
+flask
+flask-cors
+werkzeug
 
 # Optional packages for improved performance
-cupy-cuda11>=11.0.0; platform_system == "Windows"
+cupy-cuda12x; platform_system == "Windows"

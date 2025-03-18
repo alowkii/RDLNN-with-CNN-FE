@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Forgery Detection System</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h1>Image Forgery Detection System</h1>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="detect">Forgery Detection</div>
+      <div class="tab" data-tab="localize">Forgery Localization</div>
+      <div class="tab" data-tab="batch">Batch Processing</div>
+    </div>
+
+    <div id="detect-tab" class="tab-content active">
+      <h2>Detect Image Forgery</h2>
+      <p>Upload an image to detect if it has been manipulated or forged.</p>
+
+      <div id="detect-upload-container" class="upload-container">
+        <p>Drop your image here or click to browse</p>
+        <img
+          id="detect-preview"
+          class="thumbnail"
+          style="display: none; margin: 10px auto"
+        />
+        <div>
+          <label for="detect-file-input" class="upload-label"
+            >Choose File</label
+          >
+          <input
+            type="file"
+            id="detect-file-input"
+            accept=".jpg,.jpeg,.png,.bmp"
+          />
+        </div>
+      </div>
+
+      <button id="detect-button" disabled>Detect Forgery</button>
+
+      <div class="loader" id="detect-loader"></div>
+
+      <div id="detect-result" class="result-container">
+        <h3>Detection Result</h3>
+        <div id="detect-result-content"></div>
+      </div>
+    </div>
+
+    <div id="localize-tab" class="tab-content">
+      <h2>Localize Image Forgery</h2>
+      <p>Upload an image to detect and localize forged regions.</p>
+
+      <div id="localize-upload-container" class="upload-container">
+        <p>Drop your image here or click to browse</p>
+        <img
+          id="localize-preview"
+          class="thumbnail"
+          style="display: none; margin: 10px auto"
+        />
+        <div>
+          <label for="localize-file-input" class="upload-label"
+            >Choose File</label
+          >
+          <input
+            type="file"
+            id="localize-file-input"
+            accept=".jpg,.jpeg,.png,.bmp"
+          />
+        </div>
+      </div>
+
+      <button id="localize-button" disabled>Detect & Localize Forgery</button>
+
+      <div class="loader" id="localize-loader"></div>
+
+      <div id="localize-result" class="result-container">
+        <h3>Localization Result</h3>
+        <div id="localize-result-content"></div>
+      </div>
+    </div>
+
+    <div id="batch-tab" class="tab-content">
+      <h2>Batch Processing</h2>
+      <p>Upload multiple images for batch forgery detection.</p>
+
+      <div id="batch-upload-container" class="upload-container">
+        <p>Drop your images here or click to browse</p>
+        <div
+          id="batch-preview-container"
+          style="display: flex; flex-wrap: wrap; justify-content: center"
+        ></div>
+        <div>
+          <label for="batch-file-input" class="upload-label"
+            >Choose Files</label
+          >
+          <input
+            type="file"
+            id="batch-file-input"
+            accept=".jpg,.jpeg,.png,.bmp"
+            multiple
+          />
+        </div>
+      </div>
+
+      <button id="batch-button" disabled>Process Batch</button>
+
+      <div class="progress-container" id="batch-progress-container">
+        <div class="progress-bar" id="batch-progress-bar">0%</div>
+      </div>
+
+      <div class="loader" id="batch-loader"></div>
+
+      <div id="batch-result" class="result-container">
+        <h3>Batch Processing Results</h3>
+        <div id="batch-result-content"></div>
+        <div id="batch-result-items" class="batch-results"></div>
+      </div>
+    </div>
+
+    <footer>
+      <p>
+        Image Forgery Detection System - Using Polar Dyadic Wavelet Transform
+        (PDyWT) Neural Network
+      </p>
+    </footer>
+
+    <script>
+      // Base URL for the API
+      const API_BASE_URL = "http://localhost:5000/api";
+
+      // Tab switching functionality
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          // Remove active class from all tabs and content
+          document
+            .querySelectorAll(".tab")
+            .forEach((t) => t.classList.remove("active"));
+          document
+            .querySelectorAll(".tab-content")
+            .forEach((c) => c.classList.remove("active"));
+
+          // Add active class to clicked tab
+          tab.classList.add("active");
+
+          // Show the corresponding content
+          const tabId = tab.getAttribute("data-tab");
+          document.getElementById(`${tabId}-tab`).classList.add("active");
+        });
+      });
+
+      // Drag and drop functionality for detection
+      const detectUploadContainer = document.getElementById(
+        "detect-upload-container"
+      );
+      const detectFileInput = document.getElementById("detect-file-input");
+      const detectPreview = document.getElementById("detect-preview");
+      const detectButton = document.getElementById("detect-button");
+      const detectLoader = document.getElementById("detect-loader");
+      const detectResult = document.getElementById("detect-result");
+      const detectResultContent = document.getElementById(
+        "detect-result-content"
+      );
+
+      // Handle drag events for detection
+      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+        detectUploadContainer.addEventListener(
+          eventName,
+          preventDefaults,
+          false
+        );
+      });
+
+      function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        detectUploadContainer.addEventListener(eventName, highlight, false);
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        detectUploadContainer.addEventListener(eventName, unhighlight, false);
+      });
+
+      function highlight() {
+        this.classList.add("highlight");
+      }
+
+      function unhighlight() {
+        this.classList.remove("highlight");
+      }
+
+      // Handle file drop for detection
+      detectUploadContainer.addEventListener("drop", handleDetectDrop, false);
+
+      function handleDetectDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+
+        if (files.length > 0) {
+          detectFileInput.files = files;
+          handleDetectFile();
+        }
+      }
+
+      // Handle file selection for detection
+      detectFileInput.addEventListener("change", handleDetectFile, false);
+
+      function handleDetectFile() {
+        const file = detectFileInput.files[0];
+        if (file) {
+          const reader = new FileReader();
+
+          reader.onload = function (e) {
+            detectPreview.src = e.target.result;
+            detectPreview.style.display = "block";
+            detectButton.disabled = false;
+            detectResult.style.display = "none";
+          };
+
+          reader.readAsDataURL(file);
+        }
+      }
+
+      // Handle detect button click
+      detectButton.addEventListener("click", detectForgery, false);
+
+      async function detectForgery() {
+        const file = detectFileInput.files[0];
+        if (!file) return;
+
+        // Show loader
+        detectLoader.style.display = "block";
+        detectButton.disabled = true;
+        detectResult.style.display = "none";
+
+        try {
+          const formData = new FormData();
+          formData.append("image", file);
+
+          const response = await fetch(`${API_BASE_URL}/detect`, {
+            method: "POST",
+            body: formData,
+          });
+
+          const result = await response.json();
+
+          // Hide loader
+          detectLoader.style.display = "none";
+          detectButton.disabled = false;
+
+          // Display result
+          detectResult.style.display = "block";
+          detectResult.className = "result-container";
+          detectResult.classList.add(
+            result.result === "forged" ? "result-forged" : "result-authentic"
+          );
+
+          const probability = (result.probability * 100).toFixed(2);
+
+          detectResultContent.innerHTML = `
+                    <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
+                    <p><strong>Confidence:</strong> ${probability}%</p>
+                    <div class="confidence-meter">
+                        <div class="confidence-bar" style="width: ${probability}%"></div>
+                        <div class="confidence-value">${probability}%</div>
+                    </div>
+                    <p><strong>Timestamp:</strong> ${new Date(
+                      result.timestamp * 1000
+                    ).toLocaleString()}</p>
+                `;
+        } catch (error) {
+          console.error("Error:", error);
+
+          // Hide loader
+          detectLoader.style.display = "none";
+          detectButton.disabled = false;
+
+          // Display error
+          detectResult.style.display = "block";
+          detectResult.className = "result-container";
+          detectResultContent.innerHTML = `<p class="error">Error: Failed to detect forgery. Please try again.</p>`;
+        }
+      }
+
+      // Localization tab functionality
+      const localizeUploadContainer = document.getElementById(
+        "localize-upload-container"
+      );
+      const localizeFileInput = document.getElementById("localize-file-input");
+      const localizePreview = document.getElementById("localize-preview");
+      const localizeButton = document.getElementById("localize-button");
+      const localizeLoader = document.getElementById("localize-loader");
+      const localizeResult = document.getElementById("localize-result");
+      const localizeResultContent = document.getElementById(
+        "localize-result-content"
+      );
+
+      // Handle drag events for localization
+      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+        localizeUploadContainer.addEventListener(
+          eventName,
+          preventDefaults,
+          false
+        );
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        localizeUploadContainer.addEventListener(eventName, highlight, false);
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        localizeUploadContainer.addEventListener(eventName, unhighlight, false);
+      });
+
+      // Handle file drop for localization
+      localizeUploadContainer.addEventListener(
+        "drop",
+        handleLocalizeDrop,
+        false
+      );
+
+      function handleLocalizeDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+
+        if (files.length > 0) {
+          localizeFileInput.files = files;
+          handleLocalizeFile();
+        }
+      }
+
+      // Handle file selection for localization
+      localizeFileInput.addEventListener("change", handleLocalizeFile, false);
+
+      function handleLocalizeFile() {
+        const file = localizeFileInput.files[0];
+        if (file) {
+          const reader = new FileReader();
+
+          reader.onload = function (e) {
+            localizePreview.src = e.target.result;
+            localizePreview.style.display = "block";
+            localizeButton.disabled = false;
+            localizeResult.style.display = "none";
+          };
+
+          reader.readAsDataURL(file);
+        }
+      }
+
+      // Handle localize button click
+      localizeButton.addEventListener("click", localizeForgery, false);
+
+      async function localizeForgery() {
+        const file = localizeFileInput.files[0];
+        if (!file) return;
+
+        // Show loader
+        localizeLoader.style.display = "block";
+        localizeButton.disabled = true;
+        localizeResult.style.display = "none";
+
+        try {
+          const formData = new FormData();
+          formData.append("image", file);
+
+          const response = await fetch(`${API_BASE_URL}/localize`, {
+            method: "POST",
+            body: formData,
+          });
+
+          const result = await response.json();
+
+          // Hide loader
+          localizeLoader.style.display = "none";
+          localizeButton.disabled = false;
+
+          // Display result
+          localizeResult.style.display = "block";
+          localizeResult.className = "result-container";
+          localizeResult.classList.add(
+            result.result === "forged" ? "result-forged" : "result-authentic"
+          );
+
+          const probability = (result.probability * 100).toFixed(2);
+
+          let resultHtml = `
+                    <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
+                    <p><strong>Confidence:</strong> ${probability}%</p>
+                    <div class="confidence-meter">
+                        <div class="confidence-bar" style="width: ${probability}%"></div>
+                        <div class="confidence-value">${probability}%</div>
+                    </div>
+                `;
+
+          if (result.result === "forged") {
+            resultHtml += `
+                        <div class="comparison-container">
+                            <div class="comparison-image">
+                                <h4>Original Image</h4>
+                                <img src="${localizePreview.src}" class="thumbnail">
+                            </div>
+                            <div class="comparison-image">
+                                <h4>Forgery Map</h4>
+                                <img src="${API_BASE_URL}${result.forgery_map}" class="thumbnail">
+                            </div>
+                        </div>
+                    `;
+
+            if (result.regions && result.regions.length > 0) {
+              resultHtml += `<h4>Detected Suspicious Regions: ${result.regions.length}</h4>`;
+              resultHtml += `<ul>`;
+              result.regions.forEach((region, index) => {
+                resultHtml += `<li>Region ${index + 1}: (x: ${region.x}, y: ${
+                  region.y
+                }, width: ${region.width}, height: ${region.height})</li>`;
+              });
+              resultHtml += `</ul>`;
+            }
+          } else {
+            resultHtml += `<p>Image appears authentic. No forged regions detected.</p>`;
+          }
+
+          localizeResultContent.innerHTML = resultHtml;
+        } catch (error) {
+          console.error("Error:", error);
+
+          // Hide loader
+          localizeLoader.style.display = "none";
+          localizeButton.disabled = false;
+
+          // Display error
+          localizeResult.style.display = "block";
+          localizeResult.className = "result-container";
+          localizeResultContent.innerHTML = `<p class="error">Error: Failed to localize forgery. Please try again.</p>`;
+        }
+      }
+
+      // Batch processing tab functionality
+      const batchUploadContainer = document.getElementById(
+        "batch-upload-container"
+      );
+      const batchFileInput = document.getElementById("batch-file-input");
+      const batchPreviewContainer = document.getElementById(
+        "batch-preview-container"
+      );
+      const batchButton = document.getElementById("batch-button");
+      const batchProgressContainer = document.getElementById(
+        "batch-progress-container"
+      );
+      const batchProgressBar = document.getElementById("batch-progress-bar");
+      const batchLoader = document.getElementById("batch-loader");
+      const batchResult = document.getElementById("batch-result");
+      const batchResultContent = document.getElementById(
+        "batch-result-content"
+      );
+      const batchResultItems = document.getElementById("batch-result-items");
+
+      // Handle drag events for batch processing
+      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+        batchUploadContainer.addEventListener(
+          eventName,
+          preventDefaults,
+          false
+        );
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        batchUploadContainer.addEventListener(eventName, highlight, false);
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        batchUploadContainer.addEventListener(eventName, unhighlight, false);
+      });
+
+      // Handle file drop for batch processing
+      batchUploadContainer.addEventListener("drop", handleBatchDrop, false);
+
+      function handleBatchDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+
+        if (files.length > 0) {
+          batchFileInput.files = files;
+          handleBatchFile();
+        }
+      }
+
+      // Handle file selection for batch processing
+      batchFileInput.addEventListener("change", handleBatchFile, false);
+
+      function handleBatchFile() {
+        const files = batchFileInput.files;
+        if (files.length > 0) {
+          batchPreviewContainer.innerHTML = "";
+
+          // Display thumbnails for the first 10 files
+          const maxPreviews = Math.min(files.length, 10);
+
+          for (let i = 0; i < maxPreviews; i++) {
+            const file = files[i];
+            const reader = new FileReader();
+
+            reader.onload = function (e) {
+              const thumbnail = document.createElement("img");
+              thumbnail.classList.add("thumbnail");
+              thumbnail.style.maxWidth = "150px";
+              thumbnail.style.maxHeight = "150px";
+              thumbnail.style.margin = "5px";
+              thumbnail.src = e.target.result;
+              batchPreviewContainer.appendChild(thumbnail);
+            };
+
+            reader.readAsDataURL(file);
+          }
+
+          if (files.length > maxPreviews) {
+            const moreText = document.createElement("p");
+            moreText.textContent = `...and ${
+              files.length - maxPreviews
+            } more files`;
+            batchPreviewContainer.appendChild(moreText);
+          }
+
+          batchButton.disabled = false;
+          batchResult.style.display = "none";
+        }
+      }
+
+      // Handle batch process button click
+      batchButton.addEventListener("click", processBatch, false);
+
+      async function processBatch() {
+        const files = batchFileInput.files;
+        if (files.length === 0) return;
+
+        // Show loader
+        batchLoader.style.display = "block";
+        batchButton.disabled = true;
+        batchResult.style.display = "none";
+        batchProgressContainer.style.display = "block";
+        batchProgressBar.style.width = "0%";
+        batchProgressBar.textContent = "0%";
+
+        try {
+          const formData = new FormData();
+
+          for (let i = 0; i < files.length; i++) {
+            formData.append("images[]", files[i]);
+          }
+
+          const response = await fetch(`${API_BASE_URL}/batch/detect`, {
+            method: "POST",
+            body: formData,
+          });
+
+          const result = await response.json();
+
+          // Hide loader
+          batchLoader.style.display = "none";
+          batchButton.disabled = false;
+          batchProgressContainer.style.display = "none";
+
+          // Display result
+          batchResult.style.display = "block";
+
+          const forgedCount = result.batch_results.filter(
+            (item) => item.result === "forged"
+          ).length;
+          const authenticCount = result.batch_results.filter(
+            (item) => item.result === "authentic"
+          ).length;
+          const errorCount = result.batch_results.filter(
+            (item) => "error" in item
+          ).length;
+
+          batchResultContent.innerHTML = `
+                    <p><strong>Total Files:</strong> ${result.total}</p>
+                    <p><strong>Processed Successfully:</strong> ${result.successful}</p>
+                    <p><strong>Results:</strong></p>
+                    <ul>
+                        <li>Authentic: ${authenticCount}</li>
+                        <li>Forged: ${forgedCount}</li>
+                        <li>Errors: ${errorCount}</li>
+                    </ul>
+                `;
+
+          // Display individual results
+          batchResultItems.innerHTML = "";
+
+          result.batch_results.forEach((item) => {
+            const resultItem = document.createElement("div");
+            resultItem.className = "batch-result-item";
+
+            if ("error" in item) {
+              resultItem.classList.add("batch-result-error");
+              resultItem.innerHTML = `
+                            <p><strong>File:</strong> ${item.filename}</p>
+                            <p><strong>Error:</strong> ${item.error}</p>
+                        `;
+            } else {
+              resultItem.classList.add(
+                item.result === "forged"
+                  ? "batch-result-forged"
+                  : "batch-result-authentic"
+              );
+              const probability = (item.probability * 100).toFixed(2);
+
+              resultItem.innerHTML = `
+                            <p><strong>File:</strong> ${item.filename}</p>
+                            <p><strong>Result:</strong> ${item.result.toUpperCase()}</p>
+                            <p><strong>Confidence:</strong> ${probability}%</p>
+                            <div class="confidence-meter">
+                                <div class="confidence-bar" style="width: ${probability}%"></div>
+                                <div class="confidence-value">${probability}%</div>
+                            </div>
+                        `;
+            }
+
+            batchResultItems.appendChild(resultItem);
+          });
+        } catch (error) {
+          console.error("Error:", error);
+
+          // Hide loader
+          batchLoader.style.display = "none";
+          batchButton.disabled = false;
+          batchProgressContainer.style.display = "none";
+
+          // Display error
+          batchResult.style.display = "block";
+          batchResultContent.innerHTML = `<p class="error">Error: Failed to process batch. Please try again.</p>`;
+          batchResultItems.innerHTML = "";
+        }
+      }
+    </script>
+  </body>
+</html>
