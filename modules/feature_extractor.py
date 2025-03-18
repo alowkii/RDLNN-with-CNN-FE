@@ -3,6 +3,8 @@
 Polar Dyadic Wavelet Transform (PDyWT) with CNN Feature Extraction - Fixed Version
 For image forgery detection and localization
 """
+import torch.serialization
+torch.serialization.add_safe_globals(['sklearn.preprocessing._data.StandardScaler'])
 
 import os
 import numpy as np
@@ -15,6 +17,7 @@ import cv2
 from typing import Dict, List, Tuple, Union, Optional
 
 from modules.utils import logger, clean_cuda_memory
+from tools.train_localization import SimpleLocalizationModel
 
 
 class PDyWaveletTransform:
@@ -456,7 +459,8 @@ class PDyWTCNNDetector:
                 try:
                     # Try to determine input dim from file
                     if model_path.endswith('.pth'):
-                        checkpoint = torch.load(model_path, map_location=self.device)
+                        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                        self.detection_model.load_state_dict(checkpoint)
                         # Check first layer weight shape to determine input dimension
                         input_dim = None
                         for key in checkpoint.keys():
@@ -479,7 +483,7 @@ class PDyWTCNNDetector:
             logger.info(f"Initialized new WaveletCNN detection model")
         
         # Initialize localization model
-        self.localization_model = LocalizationCNN().to(self.device)
+        self.localization_model = SimpleLocalizationModel(input_channels=12).to(self.device)
         if localization_model_path and os.path.exists(localization_model_path):
             self.localization_model.load_state_dict(torch.load(localization_model_path, map_location=self.device))
             logger.info(f"Loaded localization model from {localization_model_path}")
