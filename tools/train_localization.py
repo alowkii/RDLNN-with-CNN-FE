@@ -5,6 +5,7 @@ that is more robust to different input sizes
 """
 
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,6 +16,8 @@ import glob
 
 from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, setup_logging
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Define a simpler localization model
 class SimpleLocalizationModel(nn.Module):
