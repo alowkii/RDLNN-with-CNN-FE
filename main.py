@@ -53,6 +53,8 @@ def main():
     # Execute the requested mode
     if args.mode == 'precompute':
         precompute_mode(args)
+    elif args.mode == 'localize':
+        localize_mode(args)
     elif args.mode == 'train':
         train_mode(args)
     elif args.mode == 'test':
@@ -146,6 +148,10 @@ def parse_arguments() -> argparse.Namespace:
                         action='store_true', 
                         help='Enable debug mode with additional logging')
     
+    parser.add_argument('--localize', 
+                        action='store_true',
+                        help='Perform forgery localization on detected forgeries')
+
     return parser.parse_args()
 
 def precompute_mode(args: argparse.Namespace) -> None:
