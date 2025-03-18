@@ -52,14 +52,13 @@ batch_processor = None
 
 # Configuration
 config = {
-    'detection_model_path': 'data/models/forgery_detection_model.pth',
-    'rdlnn_model_path': 'data/models/rdlnn_model.pth',  # Add RDLNN model path
-    'localization_model_path': 'data/models/pdywt_localizer.pth',
-    'upload_folder': 'uploads',
-    'results_folder': 'data/results',
-    'threshold': 0.7,  # Default classification threshold
+    'detection_model_path': '../data/models/rdlnn_model.pth',
+    'localization_model_path': '../data/models/pdywt_localizer.pth',
+    'upload_folder': './api/uploads',
+    'results_folder': '../data/results',
+    'threshold': 0.7,
     'batch_size': 8,
-    'log_file': 'data/results/api_server.log'
+    'log_file': '../data/results/api_server.log'
 }
 
 # Set up logging
@@ -257,389 +256,6 @@ def parse_detection_result(filepath):
         logger.error(f"Error parsing detection result: {e}")
         logger.error(traceback.format_exc())
         return {'error': str(e)}
-
-@app.route('/api/run/detection', methods=['POST'])
-def run_detection():
-    """
-    Run the main.py detection directly with parameters
-    Creates a unique result directory and stores all outputs there
-    """
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    try:
-        # Get the uploaded file
-        file = request.files['image']
-        
-        # Save the file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(config['upload_folder'], filename)
-        file.save(filepath)
-        
-        # Get threshold from request or use default
-        threshold = request.form.get('threshold', config['threshold'])
-        if threshold is None:
-            threshold = 0.7
-        
-        # Get model path from request or use default
-        model_path = request.form.get('model_path', config['detection_model_path'])
-        
-        # Create paths for results using standardized function
-        paths = get_result_paths(filename, result_type='detection')
-        
-        # Save a copy of the original image to the results directory
-        shutil.copy2(filepath, paths['original_path'])
-        
-        # Prepare command with normalized paths for the current OS
-        cmd = [
-            sys.executable,
-            'main.py',
-            '--mode', 'single',
-            '--image_path', filepath,
-            '--model_path', model_path,
-            '--output_dir', paths['output_dir'],
-            '--threshold', str(threshold)
-        ]
-        
-        # Run the command
-        import subprocess
-        logger.info(f"Running command: {' '.join(cmd)}")
-        process = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Parse output
-        stdout = process.stdout
-        stderr = process.stderr
-        
-        # Read result file
-        result_filename = f"{os.path.splitext(filename)[0]}_result.txt"
-        result_path = os.path.join(paths['output_dir'], result_filename)
-        
-        result = {}
-        if os.path.exists(result_path):
-            result = parse_detection_result(result_path)
-        
-        # Adjust the result paths to use standardized URLs
-        if 'forgery_map' not in result and os.path.exists(paths['forgery_map_path']):
-            result['forgery_map'] = paths['forgery_map_url']
-            
-        if 'image' not in result:
-            result['image'] = paths['original_url']
-        
-        # Build response
-        response = {
-            'run_id': paths['run_id'],
-            'command': ' '.join(cmd),
-            'status': 'success' if process.returncode == 0 else 'error',
-            'return_code': process.returncode,
-            'result': result,
-            'output_dir': paths['output_dir'],
-            'original_image': paths['original_url'],
-            'result_file': paths['result_url'],
-            'stdout': stdout,
-            'stderr': stderr
-        }
-        
-        # Return JSON response
-        return jsonify(response)
-        
-    except Exception as e:
-        logger.error(f"Error running detection: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-        
-@app.route('/api/run/localization', methods=['POST'])
-def run_localization():
-    """
-    Run the main.py localization directly with parameters
-    Creates a unique result directory and stores all outputs there
-    """
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    try:
-        # Get the uploaded file
-        file = request.files['image']
-        
-        # Save the file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(config['upload_folder'], filename)
-        file.save(filepath)
-        
-        # Get threshold from request or use default
-        threshold = request.form.get('threshold', config['threshold'])
-        if threshold is None:
-            threshold = 0.7
-        
-        # Get model paths from request or use defaults
-        model_path = request.form.get('model_path', config['detection_model_path'])
-        localization_model_path = request.form.get('localization_model_path', config['localization_model_path'])
-        
-        # Create paths for results using standardized function
-        paths = get_result_paths(filename, result_type='localization')
-        
-        # Save a copy of the original image to the results directory
-        shutil.copy2(filepath, paths['original_path'])
-        
-        # Prepare command with normalized paths for the current OS
-        cmd = [
-            sys.executable,
-            'main.py',
-            '--mode', 'localize',
-            '--image_path', filepath,
-            '--model_path', model_path,
-            '--localization_model_path', localization_model_path,
-            '--output_dir', paths['output_dir'],
-            '--threshold', str(threshold)
-        ]
-        
-        # Run the command
-        import subprocess
-        logger.info(f"Running command: {' '.join(cmd)}")
-        process = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Parse output
-        stdout = process.stdout
-        stderr = process.stderr
-        
-        # Find forgery map
-        base_name = os.path.splitext(filename)[0]
-        forgery_map = f"{base_name}_forgery_map.png"
-        forgery_map_path = paths['forgery_map_path']
-        
-        # Build response
-        response = {
-            'run_id': paths['run_id'],
-            'command': ' '.join(cmd),
-            'status': 'success' if process.returncode == 0 else 'error',
-            'return_code': process.returncode,
-            'output_dir': paths['output_dir'],
-            'original_image': paths['original_url'],
-            'stdout': stdout,
-            'stderr': stderr
-        }
-        
-        # Add forgery map if it exists in the expected location or main.py output location
-        # Check both the expected location and any generated location
-        if os.path.exists(forgery_map_path):
-            response['forgery_map'] = paths['forgery_map_url']
-        else:
-            # Look for forgery map in output directory
-            for file in os.listdir(paths['output_dir']):
-                if file.endswith('_forgery_map.png'):
-                    map_url = f"/results/localization/{paths['run_id']}/{file}"
-                    response['forgery_map'] = map_url
-                    break
-            
-        # Get result info if available
-        result_filename = f"{base_name}_result.txt"
-        result_path = paths['result_path']
-        
-        if os.path.exists(result_path):
-            response['result'] = parse_detection_result(result_path)
-            response['result_file'] = paths['result_url']
-        else:
-            # Look for any result files
-            for file in os.listdir(paths['output_dir']):
-                if file.endswith('_result.txt'):
-                    result_url = f"/results/localization/{paths['run_id']}/{file}"
-                    result_path = os.path.join(paths['output_dir'], file)
-                    response['result'] = parse_detection_result(result_path)
-                    response['result_file'] = result_url
-                    break
-        
-        # Return JSON response
-        return jsonify(response)
-        
-    except Exception as e:
-        logger.error(f"Error running localization: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-
-@app.route('/api/rdlnn/detect', methods=['POST'])
-def rdlnn_detect():
-    """
-    Detect forgery using the RDLNN model
-    Creates a unique result directory and stores all outputs there
-    """
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    try:
-        # Get the uploaded file
-        file = request.files['image']
-        
-        # Save the file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(config['upload_folder'], filename)
-        file.save(filepath)
-        
-        # Get threshold from request or use default
-        threshold = request.form.get('threshold', config['threshold'])
-        if threshold is None:
-            threshold = 0.7
-        
-        # Create paths for results using standardized function
-        paths = get_result_paths(filename, result_type='detection')
-        
-        # Save a copy of the original image to the results directory
-        shutil.copy2(filepath, paths['original_path'])
-        
-        # Prepare command using RDLNN model
-        cmd = [
-            sys.executable,
-            'main.py',
-            '--mode', 'single',
-            '--image_path', filepath,
-            '--model_path', config['rdlnn_model_path'],
-            '--output_dir', paths['output_dir'],
-            '--threshold', str(threshold)
-        ]
-        
-        # Run the command
-        import subprocess
-        logger.info(f"Running RDLNN detection: {' '.join(cmd)}")
-        process = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Get result file
-        result_filename = f"{os.path.splitext(filename)[0]}_result.txt"
-        result_path = paths['result_path']
-        
-        result = {}
-        if os.path.exists(result_path):
-            result = parse_detection_result(result_path)
-        else:
-            # Look for any result files
-            for file in os.listdir(paths['output_dir']):
-                if file.endswith('_result.txt'):
-                    result_path = os.path.join(paths['output_dir'], file)
-                    result = parse_detection_result(result_path)
-                    paths['result_url'] = f"/results/detection/{paths['run_id']}/{file}"
-                    break
-                    
-        # Ensure image URL is included
-        if 'image' not in result:
-            result['image'] = paths['original_url']
-        
-        # Build response
-        response = {
-            'run_id': paths['run_id'],
-            'model': 'rdlnn',
-            'status': 'success' if process.returncode == 0 else 'error',
-            'result': result,
-            'output_dir': paths['output_dir'],
-            'original_image': paths['original_url'],
-            'result_file': paths['result_url']
-        }
-        
-        return jsonify(response)
-        
-    except Exception as e:
-        logger.error(f"Error running RDLNN detection: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-
-@app.route('/api/rdlnn/localize', methods=['POST'])
-def rdlnn_localize():
-    """
-    Localize forgery using the RDLNN model with the PDyWT localizer
-    Creates a unique result directory and stores all outputs there
-    """
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    try:
-        # Get the uploaded file
-        file = request.files['image']
-        
-        # Save the file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(config['upload_folder'], filename)
-        file.save(filepath)
-        
-        # Get threshold from request or use default
-        threshold = request.form.get('threshold', config['threshold'])
-        if threshold is None:
-            threshold = 0.7
-        
-        # Create paths for results using standardized function
-        paths = get_result_paths(filename, result_type='localization')
-        
-        # Save a copy of the original image to the results directory
-        shutil.copy2(filepath, paths['original_path'])
-        
-        # Prepare command using RDLNN model with PDyWT localizer
-        cmd = [
-            sys.executable,
-            'main.py',
-            '--mode', 'localize',
-            '--image_path', filepath,
-            '--model_path', config['rdlnn_model_path'],
-            '--localization_model_path', config['localization_model_path'],
-            '--output_dir', paths['output_dir'],
-            '--threshold', str(threshold)
-        ]
-        
-        # Run the command
-        import subprocess
-        logger.info(f"Running RDLNN localization: {' '.join(cmd)}")
-        process = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Find forgery map
-        forgery_map_path = paths['forgery_map_path']
-        
-        # Build response
-        response = {
-            'run_id': paths['run_id'],
-            'model': 'rdlnn',
-            'status': 'success' if process.returncode == 0 else 'error',
-            'output_dir': paths['output_dir'],
-            'original_image': paths['original_url']
-        }
-        
-        # Add forgery map if it exists
-        if os.path.exists(forgery_map_path):
-            response['forgery_map'] = paths['forgery_map_url']
-        else:
-            # Look for any forgery map files
-            for file in os.listdir(paths['output_dir']):
-                if file.endswith('_forgery_map.png'):
-                    map_url = f"/results/localization/{paths['run_id']}/{file}"
-                    response['forgery_map'] = map_url
-                    break
-            
-        # Get result info if available
-        result_path = paths['result_path']
-        
-        if os.path.exists(result_path):
-            response['result'] = parse_detection_result(result_path)
-            response['result_file'] = paths['result_url']
-        else:
-            # Look for any result files
-            for file in os.listdir(paths['output_dir']):
-                if file.endswith('_result.txt'):
-                    result_path = os.path.join(paths['output_dir'], file)
-                    response['result'] = parse_detection_result(result_path)
-                    response['result_file'] = f"/results/localization/{paths['run_id']}/{file}"
-                    break
-        
-        return jsonify(response)
-        
-    except Exception as e:
-        logger.error(f"Error running RDLNN localization: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
 
 # Initialize the models and processors
 def initialize_models():
@@ -863,8 +479,7 @@ def get_config():
         'threshold': config['threshold'],
         'batch_size': config['batch_size'],
         'models': {
-            'detection': os.path.basename(config['detection_model_path']),
-            'rdlnn': os.path.basename(config['rdlnn_model_path']),
+            'rdlnn': os.path.basename(config['detection_model_path']),
             'localization': os.path.basename(config['localization_model_path'])
         },
         'results_folder': config['results_folder']
@@ -1383,147 +998,6 @@ def create_test_data():
     else:
         logger.warning("No sample images found to create test data")
         return False
-    
-@app.route('/api/results/batch/<batch_id>', methods=['GET'])
-def get_batch_results(batch_id):
-    """
-    Get results from a specific batch processing run
-    Returns details about all images processed in the batch
-    """
-    try:
-        # Validate batch_id format
-        if not batch_id.startswith('batch_'):
-            return jsonify({'error': 'Invalid batch ID format'}), 400
-        
-        # Check if batch directory exists
-        batch_dir = os.path.join(config['results_folder'], 'batch_results', batch_id)
-        if not os.path.exists(batch_dir):
-            return jsonify({'error': f'Batch {batch_id} not found'}), 404
-        
-        # Look for batch summary file
-        summary_path = os.path.join(batch_dir, 'batch_summary.txt')
-        summary_content = None
-        if os.path.exists(summary_path):
-            with open(summary_path, 'r') as f:
-                summary_content = f.readlines()
-        
-        # Get all result files in the batch directory
-        result_files = []
-        for file in os.listdir(batch_dir):
-            if file.endswith('_result.txt'):
-                result_path = os.path.join(batch_dir, file)
-                result = parse_detection_result(result_path)
-                result_files.append(result)
-        
-        # Count forgeries vs. authentic images
-        authentic_count = sum(1 for r in result_files if 'result' in r and r['result'].lower() == 'authentic')
-        forged_count = sum(1 for r in result_files if 'result' in r and r['result'].lower() == 'forged')
-        
-        # Build response
-        response = {
-            'batch_id': batch_id,
-            'total_images': len(result_files),
-            'authentic_count': authentic_count,
-            'forged_count': forged_count,
-            'summary': summary_content,
-            'results': result_files
-        }
-        
-        return jsonify(response)
-        
-    except Exception as e:
-        logger.error(f"Error retrieving batch results for {batch_id}: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
-
-@app.route('/api/analyze/threshold', methods=['POST'])
-def analyze_threshold():
-    """
-    Analyze the effect of different thresholds on prediction results
-    Creates a visualization of precision, recall, and F1 score across thresholds
-    """
-    import matplotlib.pyplot as plt
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    try:
-        # Get the uploaded file
-        file = request.files['image']
-        
-        # Save the file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(config['upload_folder'], filename)
-        file.save(filepath)
-        
-        # Create paths for results
-        run_id = f"threshold_analysis_{int(time.time())}"
-        output_dir = os.path.join(config['results_folder'], run_id)
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Save a copy of the original image
-        original_path = os.path.join(output_dir, filename)
-        shutil.copy2(filepath, original_path)
-        
-        # Get confidence scores at different thresholds
-        thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-        results = []
-        
-        # Get detection result
-        detection_result = detector.detect(filepath)
-        confidence = detection_result.get('probability', 0)
-        
-        # Calculate prediction for each threshold
-        for threshold in thresholds:
-            prediction = 1 if confidence >= threshold else 0
-            result = "forged" if prediction == 1 else "authentic"
-            
-            results.append({
-                'threshold': threshold,
-                'prediction': prediction,
-                'result': result,
-                'confidence': confidence
-            })
-        
-        # Create a visualization of thresholds
-        plt.figure(figsize=(10, 6))
-        plt.axhline(y=confidence, color='r', linestyle='-', label=f'Confidence: {confidence:.2f}')
-        
-        # Add threshold markers
-        for threshold in thresholds:
-            color = 'green' if confidence >= threshold else 'gray'
-            plt.axvline(x=threshold, color=color, alpha=0.3)
-        
-        plt.grid(True, alpha=0.3)
-        plt.xlim(0, 1.0)
-        plt.ylim(0, 1.0)
-        plt.xlabel('Threshold')
-        plt.ylabel('Confidence')
-        plt.title('Threshold Analysis')
-        
-        # Save the plot
-        plot_path = os.path.join(output_dir, 'threshold_analysis.png')
-        plt.savefig(plot_path)
-        plt.close()
-        
-        return jsonify({
-            'run_id': run_id,
-            'image': filename,
-            'confidence': confidence,
-            'threshold_results': results,
-            'original_image': f"/results/{run_id}/{filename}",
-            'threshold_analysis': f"/results/{run_id}/threshold_analysis.png"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in threshold analysis: {e}")
-        logger.error(traceback.format_exc())
-        return jsonify({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
 
 @app.route('/api/models/info', methods=['GET'])
 def get_models_info():
@@ -1546,13 +1020,13 @@ def get_models_info():
             }
         
         # Check RDLNN model path
-        rdlnn_model_path = config.get('rdlnn_model_path')
-        if rdlnn_model_path and os.path.exists(rdlnn_model_path):
+        detection_model_path = config.get('detection_model_path')
+        if detection_model_path and os.path.exists(detection_model_path):
             models_info['rdlnn_model'] = {
-                'path': rdlnn_model_path,
-                'filename': os.path.basename(rdlnn_model_path),
-                'size': os.path.getsize(rdlnn_model_path),
-                'modified': os.path.getmtime(rdlnn_model_path)
+                'path': detection_model_path,
+                'filename': os.path.basename(detection_model_path),
+                'size': os.path.getsize(detection_model_path),
+                'modified': os.path.getmtime(detection_model_path)
             }
         
         # Check localization model
@@ -1795,3 +1269,72 @@ def compare_images():
             'traceback': traceback.format_exc()
         }), 500
     
+
+def parse_args():
+    """Parse command line arguments for the API server"""
+    parser = argparse.ArgumentParser(description='Image Forgery Detection API Server')
+    
+    # Server configuration
+    parser.add_argument('--host', type=str, default='0.0.0.0',
+                        help='Host to run the server on')
+    parser.add_argument('--port', type=int, default=5000,
+                        help='Port to run the server on')
+    parser.add_argument('--debug', action='store_true',
+                        help='Run server in debug mode')
+    
+    # Model paths
+    parser.add_argument('--detection-model', type=str, default='../data/models/rdlnn_model.pth',
+                        help='Path to detection model')
+    parser.add_argument('--localization-model', type=str, default='../data/models/pdywt_localizer.pth',
+                        help='Path to localization model')
+    
+    # Directories
+    parser.add_argument('--upload-folder', type=str, default='./uploads',
+                        help='Folder for uploaded images')
+    parser.add_argument('--results-folder', type=str, default='../data/results',
+                        help='Folder for results')
+    
+    # Processing parameters
+    parser.add_argument('--threshold', type=float, default=0.7,
+                        help='Detection threshold')
+    parser.add_argument('--batch-size', type=int, default=8,
+                        help='Batch size for processing')
+    
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    # Parse command line arguments
+    args = parse_args()
+    
+    # Update configuration
+    config.update({
+        'detection_model_path': args.detection_model,
+        'localization_model_path': args.localization_model,
+        'threshold': args.threshold,
+        'batch_size': args.batch_size,
+        'upload_folder': args.upload_folder,
+        'results_folder': args.results_folder
+    })
+    
+    # Configure logging
+    logger = configure_logging()
+    
+    # Create necessary directories
+    os.makedirs(config['upload_folder'], exist_ok=True)
+    os.makedirs(config['results_folder'], exist_ok=True)
+    
+    # Log API server startup
+    logger.info("-" * 80)
+    logger.info("Starting Image Forgery Detection API Server")
+    logger.info(f"Detection model: {config['detection_model_path']}")
+    logger.info(f"Localization model: {config['localization_model_path']}")
+    logger.info(f"Results folder: {config['results_folder']}")
+    
+    # Initialize models
+    if initialize_models():
+        # Start the server
+        logger.info(f"Starting API server on {args.host}:{args.port}...")
+        app.run(host=args.host, port=args.port, debug=args.debug)
+    else:
+        logger.error("Failed to initialize models. Exiting...")
+        sys.exit(1)
