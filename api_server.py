@@ -22,7 +22,7 @@ from modules.utils import setup_logging, logger
 
 # Initialize app
 app = Flask(__name__)
-CORS(app)  # Enable Cross-Origin Resource Sharing
+CORS(app, resources={r"/api/*": {"origins": "*"}})  # Enable CORS for all API routes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

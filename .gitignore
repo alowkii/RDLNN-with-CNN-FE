@@ -69,3 +69,6 @@ logs/
 *.hdf5
 *.npz
 *.npy
+
+# frontend
+node_modules/
