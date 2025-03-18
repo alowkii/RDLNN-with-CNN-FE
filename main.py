@@ -21,7 +21,7 @@ import numpy as np
 from modules.rdlnn import RegressionDLNN
 from modules.data_handling import precompute_features, load_and_verify_features
 from modules.preprocessing import preprocess_image
-from modules.feature_extractor import PDyWTCNNDetector, extract_features_from_wavelet  # Updated import
+from modules.feature_extractor import PDyWTCNNDetector
 from modules.batch_processor import OptimizedBatchProcessor
 from modules.utils import setup_signal_handlers, plot_training_history, setup_logging, logger
 

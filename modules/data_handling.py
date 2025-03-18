@@ -132,43 +132,36 @@ def _process_image_batch(image_paths: List[str], device: torch.device, num_worke
         # Initialize detector
         detector = PDyWTCNNDetector()
         
-        # Process each image in the batch
+        # Process batch
         batch_features = []
         valid_paths = []
         
-        # Use ThreadPoolExecutor for parallel preprocessing
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            ycbcr_batch = list(executor.map(detector.preprocess_image, image_paths))
-        
-        # Filter out any None results and extract features
-        for i, (img_path, ycbcr) in enumerate(zip(image_paths, ycbcr_batch)):
-            if ycbcr is None:
-                continue
-                
-            # Extract wavelet features
+        # Process each image
+        for img_path in image_paths:
             try:
-                feature_tensor = detector.extract_wavelet_features(ycbcr)
+                # Preprocess image
+                ycbcr_tensor = detector.preprocess_image(img_path)
+                if ycbcr_tensor is None:
+                    continue
+                    
+                # Extract wavelet features
+                feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
                 
                 # Get fixed-length feature vector
                 pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-                feature_vector = pooled_features.squeeze()
+                feature_vector = pooled_features.view(-1).cpu().numpy()
                 
-                # Add to batch
-                if len(batch_features) == 0:
-                    # First feature, initialize tensor
-                    batch_features = torch.zeros((len(image_paths), feature_vector.size(0)), 
-                                                device=device)
-                    
-                batch_features[len(valid_paths)] = feature_vector
+                batch_features.append(feature_vector)
                 valid_paths.append(img_path)
             except Exception as e:
-                logger.error(f"Error extracting features from {img_path}: {e}")
+                logger.error(f"Error processing {img_path}: {e}")
         
-        if len(valid_paths) == 0:
+        if not batch_features:
             return None
             
-        # Return only the valid features
-        return batch_features[:len(valid_paths)]
+        # Stack into numpy array and convert to tensor
+        features_array = np.vstack(batch_features)
+        return torch.tensor(features_array, device=device)
         
     except Exception as e:
         logger.error(f"Error processing batch: {e}")
