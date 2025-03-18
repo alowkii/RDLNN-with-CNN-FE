@@ -11,7 +11,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 
 from modules.preprocessing import preprocess_image
-from modules.feature_extractor import PDyWTCNNDetector, extract_features_from_wavelet
+from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, clean_cuda_memory
 
 def precompute_features(directory: str, label=None, batch_size=16, num_workers=4, use_fp16=True, save_path=None) -> Dict[str, Any]:

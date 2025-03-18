@@ -9,10 +9,10 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import gc
 from typing import Dict, List, Optional, Tuple, Any, Union
+import torch.nn.functional as F
 
 from modules.preprocessing import preprocess_image
-from modules.image_decomposition import perform_wavelet_transform
-from modules.feature_extractor import extract_features_from_wavelet
+from modules.feature_extractor import PDyWTCNNDetector  # Import the detector instead
 from modules.utils import logger, clean_cuda_memory
 
 class OptimizedBatchProcessor:
@@ -36,6 +36,7 @@ class OptimizedBatchProcessor:
         self.num_workers = min(num_workers, os.cpu_count() or 4)
         self.use_fp16 = use_fp16
         self.model = model
+        self.detector = PDyWTCNNDetector()  # Initialize the detector
         
         # Create multiple CUDA streams for overlapping operations
         if self.device.type == 'cuda':
@@ -133,65 +134,47 @@ class OptimizedBatchProcessor:
             Tensor of feature vectors for the batch
         """
         try:
-            batch_size = len(image_paths)
+            # Process each image in the batch
+            batch_features = []
+            valid_paths = []
             
             # STAGE 1: Preprocess images in parallel (CPU) and move to GPU
             with torch.cuda.stream(self.streams['preprocess']) if self.device.type == 'cuda' else nullcontext():
                 # Use ThreadPoolExecutor for parallel preprocessing
                 with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-                    ycbcr_batch = list(executor.map(preprocess_image, image_paths))
+                    ycbcr_batch = list(executor.map(self.detector.preprocess_image, image_paths))
                 
                 # Filter out any None results
-                ycbcr_batch = [img for img in ycbcr_batch if img is not None]
+                valid_indices = []
+                for i, ycbcr in enumerate(ycbcr_batch):
+                    if ycbcr is not None:
+                        valid_indices.append(i)
                 
-                if not ycbcr_batch:
+                if not valid_indices:
                     logger.warning("No valid images in batch")
                     return None
                 
-                # Get consistent dimensions for batching
-                first_h, first_w = ycbcr_batch[0].shape[1], ycbcr_batch[0].shape[2]
-                ycbcr_batch = [img for img in ycbcr_batch if img.shape[1] == first_h and img.shape[2] == first_w]
-                
-                # Stack into a single batch tensor
-                if not ycbcr_batch:
-                    logger.warning("No images with consistent dimensions in batch")
-                    return None
-                    
-                ycbcr_tensor = torch.stack(ycbcr_batch)  # [B, C, H, W]
-                
-            # STAGE 2: Apply wavelet transform
-            with torch.cuda.stream(self.streams['transform']) if self.device.type == 'cuda' else nullcontext():
-                # Record the current stream to manage synchronization
-                if self.device.type == 'cuda':
-                    self.streams['preprocess'].synchronize()
-                
-                # Apply wavelet transform to each image in batch
-                pdywt_batch = []
-                for i in range(len(ycbcr_tensor)):
-                    pdywt_coeffs = perform_wavelet_transform(ycbcr_tensor[i])
-                    pdywt_batch.append(pdywt_coeffs)
+                # Process valid images
+                for i in valid_indices:
+                    try:
+                        # Extract wavelet features
+                        feature_tensor = self.detector.extract_wavelet_features(ycbcr_batch[i])
+                        
+                        # Get fixed-length feature vector
+                        pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                        feature_vector = pooled_features.view(-1).cpu().numpy()
+                        
+                        batch_features.append(feature_vector)
+                        valid_paths.append(image_paths[i])
+                    except Exception as e:
+                        logger.error(f"Error extracting features from {image_paths[i]}: {e}")
             
-            # STAGE 3: Extract features
-            with torch.cuda.stream(self.streams['features']) if self.device.type == 'cuda' else nullcontext():
-                # Ensure wavelet transform is complete
-                if self.device.type == 'cuda':
-                    self.streams['transform'].synchronize()
+            if not batch_features:
+                return None
                 
-                # Use the feature extractor for efficient feature extraction
-                with torch.amp.autocast(device_type='cuda' if self.device.type == 'cuda' else 'cpu', enabled=self.use_fp16):
-                    feature_vectors = extract_features_from_wavelet(
-                        ycbcr_tensor, 
-                        pdywt_batch,
-                        device=self.device,
-                        batch_size=self.batch_size,
-                        use_fp16=self.use_fp16
-                    )
-            
-            # Ensure all operations are complete
-            if self.device.type == 'cuda':
-                self.streams['features'].synchronize()
-            
-            return feature_vectors
+            # Stack features into a batch
+            features_array = np.vstack(batch_features)
+            return torch.tensor(features_array, device=self.device)
             
         except Exception as e:
             logger.error(f"Error processing batch: {e}")

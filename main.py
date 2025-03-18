@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
+import torch.nn.functional as F
 
 # Import modules
 # Import modules
