@@ -1,0 +1,404 @@
+{
+  "info": {
+    "name": "Image Forgery Detection API",
+    "description": "Test collection for Image Forgery Detection API Server",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Status & Info",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Check if the API server is running correctly"
+          }
+        },
+        {
+          "name": "System Status",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/system/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "system", "status"]
+            },
+            "description": "Get detailed system status including CUDA, directories, and model info"
+          }
+        },
+        {
+          "name": "Get Config",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "config"]
+            },
+            "description": "Get current configuration settings"
+          }
+        },
+        {
+          "name": "Models Info",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/models/info",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "models", "info"]
+            },
+            "description": "Get information about available models"
+          }
+        },
+        {
+          "name": "Test Data Info",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/test_data/info",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "test_data", "info"]
+            },
+            "description": "Get information about available test data"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Default Model Endpoints",
+      "item": [
+        {
+          "name": "Detect Forgery",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/detect",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "detect"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to detect forgery in"
+                }
+              ]
+            },
+            "description": "Detect if an image is forged using the default model"
+          }
+        },
+        {
+          "name": "Localize Forgery",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/localize",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "localize"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to detect and localize forgery in"
+                }
+              ]
+            },
+            "description": "Detect and localize forgery regions in an image"
+          }
+        },
+        {
+          "name": "Batch Detect",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/batch/detect",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "batch", "detect"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "images[]",
+                  "type": "file",
+                  "src": "/path/to/image1.jpg",
+                  "description": "First image to detect forgery in"
+                },
+                {
+                  "key": "images[]",
+                  "type": "file",
+                  "src": "/path/to/image2.jpg",
+                  "description": "Second image to detect forgery in"
+                }
+              ]
+            },
+            "description": "Process multiple images for forgery detection in batch mode"
+          }
+        },
+        {
+          "name": "Compare Images",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/compare",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "compare"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image1",
+                  "type": "file",
+                  "src": "/path/to/image1.jpg",
+                  "description": "First image to compare"
+                },
+                {
+                  "key": "image2",
+                  "type": "file",
+                  "src": "/path/to/image2.jpg",
+                  "description": "Second image to compare"
+                }
+              ]
+            },
+            "description": "Compare two images for similarity and potential forgery"
+          }
+        },
+        {
+          "name": "Analyze Threshold",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze/threshold",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze", "threshold"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to analyze with different thresholds"
+                }
+              ]
+            },
+            "description": "Analyze the effect of different thresholds on prediction results"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Run Scripts Directly",
+      "item": [
+        {
+          "name": "Run Detection Script",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/run/detection",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "run", "detection"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to detect forgery in"
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.7",
+                  "type": "text",
+                  "description": "Detection threshold (0.0-1.0)"
+                },
+                {
+                  "key": "model_path",
+                  "value": "data/models/forgery_detection_model.pth",
+                  "type": "text",
+                  "description": "Optional custom model path"
+                }
+              ]
+            },
+            "description": "Run the main.py detection script directly with parameters"
+          }
+        },
+        {
+          "name": "Run Localization Script",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/run/localization",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "run", "localization"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to localize forgery in"
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.7",
+                  "type": "text",
+                  "description": "Detection threshold (0.0-1.0)"
+                },
+                {
+                  "key": "model_path",
+                  "value": "data/models/forgery_detection_model.pth",
+                  "type": "text",
+                  "description": "Optional custom detection model path"
+                },
+                {
+                  "key": "localization_model_path",
+                  "value": "data/models/pdywt_localizer.pth",
+                  "type": "text",
+                  "description": "Optional custom localization model path"
+                }
+              ]
+            },
+            "description": "Run the main.py localization script directly with parameters"
+          }
+        }
+      ]
+    },
+    {
+      "name": "RDLNN Model Endpoints",
+      "item": [
+        {
+          "name": "RDLNN Detect",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/rdlnn/detect",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rdlnn", "detect"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to detect forgery in using RDLNN"
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.7",
+                  "type": "text",
+                  "description": "Detection threshold (0.0-1.0)"
+                }
+              ]
+            },
+            "description": "Detect forgery using the RDLNN model"
+          }
+        },
+        {
+          "name": "RDLNN Localize",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/rdlnn/localize",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rdlnn", "localize"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to detect and localize forgery in using RDLNN"
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.7",
+                  "type": "text",
+                  "description": "Detection threshold (0.0-1.0)"
+                }
+              ]
+            },
+            "description": "Detect and localize forgery using the RDLNN model with PDyWT localizer"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Test Data Management",
+      "item": [
+        {
+          "name": "Save Test Image",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/save_test_image",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "save_test_image"]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "/path/to/image.jpg",
+                  "description": "Image to save as test data"
+                }
+              ]
+            },
+            "description": "Save an uploaded image as test data for development and testing"
+          }
+        },
+        {
+          "name": "Get Batch Results",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/results/batch/batch_{{batchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "results", "batch", "batch_{{batchId}}"]
+            },
+            "description": "Get results from a specific batch processing run"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string",
+      "description": "Base URL for the API server"
+    },
+    {
+      "key": "batchId",
+      "value": "1234567890",
+      "type": "string",
+      "description": "A batch ID from a previous batch processing run"
+    }
+  ]
+}
