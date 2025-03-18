@@ -1137,138 +1137,604 @@ def system_status():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
-
-@app.route('/api/compare', methods=['POST'])
-def compare_images():
+    
+@app.route('/api/results/<path:path>', methods=['GET'])
+def serve_result_file(path):
     """
-    Compare two images for similarity to detect potential forgery
-    Analyzes two images and provides similarity metrics and visualization
+    Serve a result file from the results directory
+    
+    Args:
+        path: Relative path to the file within the results folder
     """
-    if 'image1' not in request.files or 'image2' not in request.files:
-        return jsonify({'error': 'Two images must be provided'}), 400
+    file_path = os.path.join(config['results_folder'], path)
+    if not os.path.exists(file_path):
+        return jsonify({'error': f'File not found: {path}'}), 404
     
     try:
-        # Get the uploaded files
-        file1 = request.files['image1']
-        file2 = request.files['image2']
+        return send_file(file_path)
+    except Exception as e:
+        logger.error(f"Error serving file {file_path}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/results/detection/<run_id>', methods=['GET'])
+def get_detection_result(run_id):
+    """
+    Retrieve detection result for a specific run
+    
+    Args:
+        run_id: ID of the detection run
         
-        # Save the files temporarily
-        filename1 = secure_filename(file1.filename)
-        filename2 = secure_filename(file2.filename)
-        filepath1 = os.path.join(config['upload_folder'], filename1)
-        filepath2 = os.path.join(config['upload_folder'], filename2)
-        file1.save(filepath1)
-        file2.save(filepath2)
+    Returns:
+        Dictionary with detection results including original image, 
+        result data and file paths
+    """
+    try:
+        # Build path to the run directory
+        run_dir = os.path.join(config['results_folder'], 'detection', run_id)
         
-        # Create output directory
-        run_id = f"compare_{int(time.time())}"
-        output_dir = os.path.join(config['results_folder'], 'compare', run_id)
-        os.makedirs(output_dir, exist_ok=True)
+        if not os.path.exists(run_dir) or not os.path.isdir(run_dir):
+            return jsonify({'error': f'Detection run not found: {run_id}'}), 404
         
-        # Save copies of the original images
-        shutil.copy2(filepath1, os.path.join(output_dir, filename1))
-        shutil.copy2(filepath2, os.path.join(output_dir, filename2))
+        # Get all files in the run directory
+        files = os.listdir(run_dir)
         
-        # Detect forgery in both images
-        detection1 = detector.detect(filepath1)
-        detection2 = detector.detect(filepath2)
+        # Find result file, original image, and any other related files
+        result_file = None
+        original_image = None
         
-        # Compare PDyWT-based features for similarity
-        feature1 = detection1.get('features')
-        feature2 = detection2.get('features')
+        # Get first image and its associated result file
+        for file in files:
+            if file.endswith('_result.txt'):
+                result_file = file
+                # Base name without _result.txt
+                base_name = file[:-11]
+                
+                # Look for original image with this base name
+                for img_file in files:
+                    if img_file.startswith(base_name) and img_file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                        original_image = img_file
+                        break
+                
+                if original_image:
+                    break
         
-        similarity_score = None
-        if feature1 is not None and feature2 is not None:
-            # Calculate cosine similarity between feature vectors
-            from sklearn.metrics.pairwise import cosine_similarity
-            similarity = cosine_similarity([feature1], [feature2])[0][0]
-            similarity_score = float(similarity)
+        if not result_file or not original_image:
+            return jsonify({'error': 'No complete detection result found in this run'}), 404
         
-        # Generate comparison visualization
-        comparison_path = os.path.join(output_dir, 'comparison.png')
+        # Get full paths
+        result_path = os.path.join(run_dir, result_file)
+        image_path = os.path.join(run_dir, original_image)
         
-        # Use PIL to create a side-by-side comparison
-        from PIL import Image, ImageDraw, ImageFont
+        # Read result file content
+        result_content = {}
+        with open(result_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    result_content[key.strip().lower().replace(' ', '_')] = value.strip()
         
-        # Open images
-        img1 = Image.open(filepath1)
-        img2 = Image.open(filepath2)
-        
-        # Resize to same height if needed
-        if img1.height != img2.height:
-            # Calculate new dimensions preserving aspect ratio
-            new_height = min(img1.height, img2.height, 600)  # Limit max height
-            
-            # Resize img1
-            aspect1 = img1.width / img1.height
-            new_width1 = int(new_height * aspect1)
-            img1 = img1.resize((new_width1, new_height), Image.LANCZOS)
-            
-            # Resize img2
-            aspect2 = img2.width / img2.height
-            new_width2 = int(new_height * aspect2)
-            img2 = img2.resize((new_width2, new_height), Image.LANCZOS)
-        
-        # Create new image to hold the comparison
-        comparison_width = img1.width + img2.width + 20  # 20px padding
-        comparison_height = img1.height + 60  # 60px for text at bottom
-        comparison = Image.new('RGB', (comparison_width, comparison_height), color='white')
-        
-        # Paste images
-        comparison.paste(img1, (0, 0))
-        comparison.paste(img2, (img1.width + 20, 0))
-        
-        # Add text with results
-        draw = ImageDraw.Draw(comparison)
-        
-        # Add similarity score and detection results
-        text_y = img1.height + 10
-        
-        # Format detection results
-        result1 = f"{detection1.get('prediction', 0) == 1 and 'FORGED' or 'AUTHENTIC'} ({detection1.get('probability', 0):.2f})"
-        result2 = f"{detection2.get('prediction', 0) == 1 and 'FORGED' or 'AUTHENTIC'} ({detection2.get('probability', 0):.2f})"
-        
-        # Add text
-        draw.text((10, text_y), f"Image 1: {result1}", fill=(0, 0, 0))
-        draw.text((img1.width + 30, text_y), f"Image 2: {result2}", fill=(0, 0, 0))
-        
-        # Add similarity score in the middle
-        if similarity_score is not None:
-            sim_text = f"Similarity: {similarity_score:.2f}"
-            draw.text((comparison_width // 2 - 40, text_y + 20), sim_text, fill=(0, 0, 0))
-        
-        # Save comparison image
-        comparison.save(comparison_path)
-        
-        # Prepare the response
+        # Create response with file URLs
         response = {
             'run_id': run_id,
-            'image1': {
-                'filename': filename1,
-                'prediction': detection1.get('prediction', 0),
-                'probability': detection1.get('probability', 0),
-                'url': f"/results/compare/{run_id}/{filename1}"
-            },
-            'image2': {
-                'filename': filename2,
-                'prediction': detection2.get('prediction', 0),
-                'probability': detection2.get('probability', 0),
-                'url': f"/results/compare/{run_id}/{filename2}"
-            },
-            'similarity': similarity_score,
-            'comparison_url': f"/results/compare/{run_id}/comparison.png"
+            'original_image': f"/results/detection/{run_id}/{original_image}",
+            'result_file': f"/results/detection/{run_id}/{result_file}",
+            'result_data': result_content,
+            'timestamp': int(time.time())
         }
         
         return jsonify(response)
         
     except Exception as e:
-        logger.error(f"Error comparing images: {e}")
+        logger.error(f"Error retrieving detection result: {e}")
         logger.error(traceback.format_exc())
         return jsonify({
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+
+@app.route('/api/results/localization/<run_id>', methods=['GET'])
+def get_localization_result(run_id):
+    """
+    Retrieve localization result for a specific run
     
+    Args:
+        run_id: ID of the localization run
+        
+    Returns:
+        Dictionary with localization results including original image, 
+        forgery map, result data and file paths
+    """
+    try:
+        # Build path to the run directory
+        run_dir = os.path.join(config['results_folder'], 'localization', run_id)
+        
+        if not os.path.exists(run_dir) or not os.path.isdir(run_dir):
+            return jsonify({'error': f'Localization run not found: {run_id}'}), 404
+        
+        # Get all files in the run directory
+        files = os.listdir(run_dir)
+        
+        # Find result file, original image, and forgery map
+        result_file = None
+        original_image = None
+        forgery_map = None
+        
+        # Get first result set
+        for file in files:
+            if file.endswith('_result.txt'):
+                result_file = file
+                # Base name without _result.txt
+                base_name = file[:-11]
+                
+                # Look for original image and forgery map with this base name
+                for related_file in files:
+                    if related_file.startswith(base_name):
+                        if related_file.endswith('_forgery_map.png'):
+                            forgery_map = related_file
+                        elif related_file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')) and not related_file.endswith('_forgery_map.png'):
+                            original_image = related_file
+                
+                if original_image:
+                    break
+        
+        if not result_file or not original_image:
+            return jsonify({'error': 'No complete localization result found in this run'}), 404
+        
+        # Get full paths
+        result_path = os.path.join(run_dir, result_file)
+        image_path = os.path.join(run_dir, original_image)
+        
+        # Read result file content
+        result_content = {}
+        with open(result_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    result_content[key.strip().lower().replace(' ', '_')] = value.strip()
+        
+        # Create response with file URLs
+        response = {
+            'run_id': run_id,
+            'original_image': f"/results/localization/{run_id}/{original_image}",
+            'result_file': f"/results/localization/{run_id}/{result_file}",
+            'result_data': result_content,
+            'timestamp': int(time.time())
+        }
+        
+        # Add forgery map if available
+        if forgery_map:
+            response['forgery_map'] = f"/results/localization/{run_id}/{forgery_map}"
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving localization result: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/results/latest', methods=['GET'])
+def get_latest_results():
+    """
+    Retrieve the latest detection and localization results
+    
+    Returns:
+        Dictionary with the most recent results from each category
+    """
+    try:
+        result_types = ['detection', 'localization']
+        latest_results = {}
+        
+        for result_type in result_types:
+            type_dir = os.path.join(config['results_folder'], result_type)
+            if not os.path.exists(type_dir):
+                continue
+                
+            # Get all run directories
+            run_dirs = [d for d in os.listdir(type_dir) if os.path.isdir(os.path.join(type_dir, d))]
+            
+            if not run_dirs:
+                continue
+                
+            # Sort by timestamp (format: run_TIMESTAMP)
+            run_dirs.sort(key=lambda x: int(x.split('_')[-1]) if x.startswith('run_') and x.split('_')[-1].isdigit() else 0, reverse=True)
+            
+            # Get the latest run
+            latest_run = run_dirs[0]
+            
+            # Get result for this run using the appropriate endpoint
+            if result_type == 'detection':
+                result = get_detection_result(latest_run).get_json()
+            elif result_type == 'localization':
+                result = get_localization_result(latest_run).get_json()
+            else:
+                continue
+                
+            # Add to results if no error
+            if 'error' not in result:
+                latest_results[result_type] = result
+        
+        if not latest_results:
+            return jsonify({'message': 'No results found'}), 404
+            
+        return jsonify(latest_results)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving latest results: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/detect/image', methods=['POST'])
+def detect_single_image():
+    """
+    Process a single image for forgery detection
+    Ensures only one image is processed and result is returned directly
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Create a unique run ID for this specific detection
+        run_id = f"run_{int(time.time())}"
+        
+        # Create output directory
+        output_dir = os.path.join(config['results_folder'], 'detection', run_id)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save a copy of the original image
+        original_path = os.path.join(output_dir, filename)
+        shutil.copy2(filepath, original_path)
+        
+        # Process the image
+        start_time = time.time()
+        result = detector.detect(filepath)
+        
+        # Determine result type
+        is_forged = result['prediction'] == 1
+        result_type = 'forged' if is_forged else 'authentic'
+        
+        # Create result file path
+        base_name = os.path.splitext(filename)[0]
+        result_path = os.path.join(output_dir, f"{base_name}_result.txt")
+        
+        # Format the result data for saving
+        result_data = {
+            'image': filename,
+            'result': result_type,
+            'probability': f"{float(result['probability']):.4f}",
+            'threshold': f"{float(detector.threshold):.4f}",
+            'processing_time': f"{time.time() - start_time:.4f}",
+            'timestamp': datetime.now().isoformat(),
+            'model': os.path.basename(config['detection_model_path'])
+        }
+        
+        # Save result info to text file
+        with open(result_path, 'w') as f:
+            for key, value in result_data.items():
+                f.write(f"{key.replace('_', ' ').title()}: {value}\n")
+        
+        # Construct URLs for frontend
+        original_url = f"/results/detection/{run_id}/{filename}"
+        result_url = f"/results/detection/{run_id}/{base_name}_result.txt"
+        
+        # Format the response
+        response = {
+            'run_id': run_id,
+            'filename': filename,
+            'result': result_type,
+            'probability': float(result['probability']),
+            'threshold': float(detector.threshold),
+            'processing_time': time.time() - start_time,
+            'timestamp': int(time.time()),
+            'original_image': original_url,
+            'result_file': result_url
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in single image detection: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/localize/image', methods=['POST'])
+def localize_single_image():
+    """
+    Process a single image for forgery localization
+    Ensures only one image is processed and result is returned directly
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Create a unique run ID for this specific localization
+        run_id = f"run_{int(time.time())}"
+        
+        # Create output directory
+        output_dir = os.path.join(config['results_folder'], 'localization', run_id)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save a copy of the original image
+        original_path = os.path.join(output_dir, filename)
+        shutil.copy2(filepath, original_path)
+        
+        # Get base name and paths for results
+        base_name = os.path.splitext(filename)[0]
+        result_path = os.path.join(output_dir, f"{base_name}_result.txt")
+        forgery_map_path = os.path.join(output_dir, f"{base_name}_forgery_map.png")
+        
+        # First detect if the image is forged
+        start_time = time.time()
+        detection_result = detector.detect(filepath)
+        
+        # Determine result type
+        is_forged = detection_result['prediction'] == 1
+        result_type = 'forged' if is_forged else 'authentic'
+        
+        # Base result data for saving
+        result_data = {
+            'image': filename,
+            'result': result_type,
+            'probability': f"{float(detection_result['probability']):.4f}",
+            'threshold': f"{float(detector.threshold):.4f}",
+            'timestamp': datetime.now().isoformat(),
+            'model': os.path.basename(config['detection_model_path'])
+        }
+        
+        # Construct response URLs
+        original_url = f"/results/localization/{run_id}/{filename}"
+        result_url = f"/results/localization/{run_id}/{base_name}_result.txt"
+        
+        # Base response
+        response = {
+            'run_id': run_id,
+            'filename': filename,
+            'result': result_type,
+            'probability': float(detection_result['probability']),
+            'threshold': float(detector.threshold),
+            'timestamp': int(time.time()),
+            'original_image': original_url,
+            'result_file': result_url
+        }
+        
+        # If forged, perform localization
+        if is_forged:
+            # Localize the forgery
+            localization_result = detector.localize(filepath, save_path=forgery_map_path)
+            
+            # Update result data with localization info
+            result_data['localization_model'] = os.path.basename(config['localization_model_path'])
+            result_data['region_count'] = len(localization_result.get('region_proposals', []))
+            
+            # Update the response with localization information
+            forgery_map_url = f"/results/localization/{run_id}/{base_name}_forgery_map.png"
+            response['forgery_map'] = forgery_map_url
+            response['regions'] = localization_result.get('region_proposals', [])
+        
+        # Update processing time
+        processing_time = time.time() - start_time
+        result_data['processing_time'] = f"{processing_time:.4f}"
+        response['processing_time'] = processing_time
+        
+        # Save result info to text file
+        with open(result_path, 'w') as f:
+            for key, value in result_data.items():
+                f.write(f"{key.replace('_', ' ').title()}: {value}\n")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in single image localization: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/results/list/detection', methods=['GET'])
+def list_detection_results():
+    """
+    List all available detection results ordered by newest first
+    """
+    try:
+        detection_dir = os.path.join(config['results_folder'], 'detection')
+        if not os.path.exists(detection_dir):
+            return jsonify({'results': []}), 200
+            
+        # Get all run directories
+        run_dirs = [d for d in os.listdir(detection_dir) if os.path.isdir(os.path.join(detection_dir, d))]
+        
+        # Sort by timestamp (format: run_TIMESTAMP)
+        run_dirs.sort(key=lambda x: int(x.split('_')[-1]) if x.startswith('run_') and x.split('_')[-1].isdigit() else 0, reverse=True)
+        
+        # Process each run directory
+        results = []
+        for run_id in run_dirs:
+            run_dir = os.path.join(detection_dir, run_id)
+            
+            # Get the first set of detection results in this directory
+            files = os.listdir(run_dir)
+            result_files = [f for f in files if f.endswith('_result.txt')]
+            
+            if not result_files:
+                continue
+                
+            # Just take the first result file
+            result_file = result_files[0]
+            base_name = result_file[:-11]  # Remove '_result.txt'
+            
+            # Find the original image
+            original_image = None
+            for f in files:
+                if f.startswith(base_name) and f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')) and not f.endswith('_forgery_map.png'):
+                    original_image = f
+                    break
+            
+            if not original_image:
+                continue
+                
+            # Read basic info from result file
+            result_path = os.path.join(run_dir, result_file)
+            result_content = {}
+            with open(result_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if ':' in line:
+                        key, value = line.split(':', 1)
+                        result_content[key.strip().lower().replace(' ', '_')] = value.strip()
+            
+            # Add to results
+            result_info = {
+                'run_id': run_id,
+                'timestamp': int(run_id.split('_')[-1]) if run_id.startswith('run_') and run_id.split('_')[-1].isdigit() else 0,
+                'filename': original_image,
+                'original_image': f"/results/detection/{run_id}/{original_image}",
+                'result_file': f"/results/detection/{run_id}/{result_file}",
+                'result': result_content.get('result', 'unknown')
+            }
+            
+            if 'probability' in result_content:
+                try:
+                    result_info['probability'] = float(result_content['probability'])
+                except ValueError:
+                    result_info['probability'] = result_content['probability']
+            
+            results.append(result_info)
+            
+        return jsonify({'results': results})
+        
+    except Exception as e:
+        logger.error(f"Error listing detection results: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/results/list/localization', methods=['GET'])
+def list_localization_results():
+    """
+    List all available localization results ordered by newest first
+    """
+    try:
+        localization_dir = os.path.join(config['results_folder'], 'localization')
+        if not os.path.exists(localization_dir):
+            return jsonify({'results': []}), 200
+            
+        # Get all run directories
+        run_dirs = [d for d in os.listdir(localization_dir) if os.path.isdir(os.path.join(localization_dir, d))]
+        
+        # Sort by timestamp (format: run_TIMESTAMP)
+        run_dirs.sort(key=lambda x: int(x.split('_')[-1]) if x.startswith('run_') and x.split('_')[-1].isdigit() else 0, reverse=True)
+        
+        # Process each run directory
+        results = []
+        for run_id in run_dirs:
+            run_dir = os.path.join(localization_dir, run_id)
+            
+            # Get the first set of localization results in this directory
+            files = os.listdir(run_dir)
+            result_files = [f for f in files if f.endswith('_result.txt')]
+            
+            if not result_files:
+                continue
+                
+            # Just take the first result file
+            result_file = result_files[0]
+            base_name = result_file[:-11]  # Remove '_result.txt'
+            
+            # Find the original image and forgery map
+            original_image = None
+            forgery_map = None
+            
+            for f in files:
+                if f.startswith(base_name):
+                    if f.endswith('_forgery_map.png'):
+                        forgery_map = f
+                    elif f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')) and not f.endswith('_forgery_map.png'):
+                        original_image = f
+            
+            if not original_image:
+                continue
+                
+            # Read basic info from result file
+            result_path = os.path.join(run_dir, result_file)
+            result_content = {}
+            with open(result_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if ':' in line:
+                        key, value = line.split(':', 1)
+                        result_content[key.strip().lower().replace(' ', '_')] = value.strip()
+            
+            # Add to results
+            result_info = {
+                'run_id': run_id,
+                'timestamp': int(run_id.split('_')[-1]) if run_id.startswith('run_') and run_id.split('_')[-1].isdigit() else 0,
+                'filename': original_image,
+                'original_image': f"/results/localization/{run_id}/{original_image}",
+                'result_file': f"/results/localization/{run_id}/{result_file}",
+                'result': result_content.get('result', 'unknown')
+            }
+            
+            if forgery_map:
+                result_info['forgery_map'] = f"/results/localization/{run_id}/{forgery_map}"
+            
+            if 'probability' in result_content:
+                try:
+                    result_info['probability'] = float(result_content['probability'])
+                except ValueError:
+                    result_info['probability'] = result_content['probability']
+                    
+            if 'region_count' in result_content:
+                try:
+                    result_info['region_count'] = int(result_content['region_count'])
+                except ValueError:
+                    result_info['region_count'] = result_content['region_count']
+            
+            results.append(result_info)
+            
+        return jsonify({'results': results})
+        
+    except Exception as e:
+        logger.error(f"Error listing localization results: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 def parse_args():
     """Parse command line arguments for the API server"""
