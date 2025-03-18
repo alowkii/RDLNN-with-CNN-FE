@@ -149,7 +149,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--threshold',
                     type=float,
                     default=None,
-                    help='Override classification threshold (default: use model\'s threshold or 0.5)')
+                    help='Override classification threshold (default: use model\'s threshold or 0.7)')
     
     parser.add_argument('--debug', 
                         action='store_true', 
@@ -298,7 +298,7 @@ def test_mode(args: argparse.Namespace) -> None:
     model = RegressionDLNN.load(args.model_path)
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.5)
+    threshold = getattr(model, 'threshold', 0.7)
     logger.info(f"Using classification threshold: {threshold}")
     
     # Precompute features if not already done
@@ -471,7 +471,7 @@ def test_single_image(args: argparse.Namespace) -> None:
     model = RegressionDLNN.load(args.model_path)
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.5)
+    threshold = getattr(model, 'threshold', 0.7)
     logger.info(f"Using classification threshold: {threshold}")
 
     if args.threshold:

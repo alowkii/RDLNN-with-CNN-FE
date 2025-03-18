@@ -492,7 +492,7 @@ class PDyWTCNNDetector:
         self.localization_model.eval()
         
         # Set threshold for classification
-        self.threshold = 0.5
+        self.threshold = 0.7
         logger.info(f"PDyWT-CNN detector initialized on {self.device}")
         
     def preprocess_image(self, image_path):
