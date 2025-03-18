@@ -56,7 +56,11 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'time': time.time(),
-        'service': 'Image Forgery Detection API'
+        'service': 'Image Forgery Detection API',
+        'model_info': {
+            'name': 'PDyWT-CNN',
+            'threshold': getattr(detector, 'threshold', 0.7) if detector else 0.7
+        }
     })
 
 @app.route('/api/detect', methods=['POST'])
@@ -177,8 +181,13 @@ def localize_forgery():
                 'error': detection_result['error']
             }), 500
         
+        # Get the probability and apply threshold
+        probability = detection_result['probability']
+        threshold = getattr(detector, 'threshold', 0.7)
+        is_forged = detection_result['prediction'] == 1
+        
         # Only perform localization if the image is classified as forged
-        if detection_result['prediction'] == 1:
+        if is_forged:
             # Generate result filename
             result_filename = f"{timestamp}_forgery_map.png"
             result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
@@ -194,11 +203,12 @@ def localize_forgery():
             # Format the response
             result = {
                 'result': 'forged',
-                'probability': float(detection_result['probability']),
+                'probability': float(probability),
                 'timestamp': timestamp,
                 'filename': filename,
                 'forgery_map': f"/api/results/{result_filename}",
-                'regions': localization_result['region_proposals']
+                'regions': localization_result['region_proposals'],
+                'threshold': float(threshold)
             }
             
             return jsonify(result)
@@ -206,10 +216,11 @@ def localize_forgery():
             # Image is authentic, no need for localization
             return jsonify({
                 'result': 'authentic',
-                'probability': float(detection_result['probability']),
+                'probability': float(probability),
                 'timestamp': timestamp,
                 'filename': filename,
-                'message': 'Image appears authentic, no forgery localization performed.'
+                'message': 'Image appears authentic, no forgery localization performed.',
+                'threshold': float(threshold)
             })
         
     except Exception as e:
@@ -253,6 +264,7 @@ def batch_detect():
             'error': 'No files provided'
         }), 400
     
+    threshold = getattr(detector, 'threshold', 0.7)
     results = []
     for file in files:
         # Check file extension
@@ -269,7 +281,7 @@ def batch_detect():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{timestamp}_{filename}")
         file.save(file_path)
         
-        app.logger.info(f"Processing image: {file_path}")
+        app.logger.info(f"Processing image in batch: {file_path}")
         
         try:
             # Perform forgery detection
@@ -286,7 +298,8 @@ def batch_detect():
                     'filename': filename,
                     'result': 'forged' if detection_result['prediction'] == 1 else 'authentic',
                     'probability': float(detection_result['probability']),
-                    'timestamp': timestamp
+                    'timestamp': timestamp,
+                    'threshold': float(threshold)
                 })
                 
         except Exception as e:
@@ -299,7 +312,8 @@ def batch_detect():
     return jsonify({
         'batch_results': results,
         'total': len(files),
-        'successful': sum(1 for r in results if 'error' not in r)
+        'successful': sum(1 for r in results if 'error' not in r),
+        'threshold': float(threshold)
     })
 
 def cleanup_old_files():
@@ -342,6 +356,8 @@ def main():
                         help='Path to the forgery detection model')
     parser.add_argument('--localization_model_path', type=str, default='data/models/pdywt_localizer.pth',
                         help='Path to the forgery localization model')
+    parser.add_argument('--threshold', type=float, default=None,
+                        help='Custom threshold for forgery detection (default: use model threshold or 0.7)')
     
     args = parser.parse_args()
     
@@ -356,6 +372,14 @@ def main():
             localization_model_path=args.localization_model_path,
             use_gpu=True
         )
+        
+        # Override threshold if provided
+        if args.threshold is not None:
+            detector.threshold = args.threshold
+            app.logger.info(f"Using custom threshold: {args.threshold}")
+        else:
+            app.logger.info(f"Using model threshold: {detector.threshold}")
+            
         app.logger.info("Detector initialized successfully")
     except Exception as e:
         app.logger.error(f"Failed to initialize detector: {str(e)}")
@@ -366,10 +390,13 @@ def main():
     cleanup_thread.start()
     
     # Print API information
+    threshold_info = f"Using detection threshold: {detector.threshold}"
+    
     print("\n" + "="*50)
     print("Image Forgery Detection API Server")
     print("="*50)
     print(f"Server running at: http://{args.host}:{args.port}")
+    print(threshold_info)
     print("Available endpoints:")
     print("  GET  /api/health                - Health check")
     print("  POST /api/detect                - Detect if an image is forged")

@@ -127,7 +127,7 @@
     </footer>
 
     <script>
-      // Base URL for the API
+      // Base URL for the API - can be updated based on deployment environment
       const API_BASE_URL = "http://localhost:5000/api";
 
       // Tab switching functionality
@@ -150,7 +150,58 @@
         });
       });
 
-      // Drag and drop functionality for detection
+      // Utility function to prevent defaults for drag events
+      function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      // Utility functions for highlighting during drag
+      function highlight() {
+        this.classList.add("highlight");
+      }
+
+      function unhighlight() {
+        this.classList.remove("highlight");
+      }
+
+      // Apply drag event handlers to an element
+      function setupDragAndDrop(container, fileInput, fileHandler) {
+        // Handle drag events
+        ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+          container.addEventListener(eventName, preventDefaults, false);
+        });
+
+        // Add highlighting
+        ["dragenter", "dragover"].forEach((eventName) => {
+          container.addEventListener(eventName, highlight, false);
+        });
+
+        // Remove highlighting
+        ["dragleave", "drop"].forEach((eventName) => {
+          container.addEventListener(eventName, unhighlight, false);
+        });
+
+        // Handle file drop
+        container.addEventListener(
+          "drop",
+          (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+              fileInput.files = files;
+              fileHandler();
+            }
+          },
+          false
+        );
+
+        // Handle file selection via input
+        fileInput.addEventListener("change", fileHandler, false);
+      }
+
+      // DETECTION TAB SETUP
       const detectUploadContainer = document.getElementById(
         "detect-upload-container"
       );
@@ -163,52 +214,7 @@
         "detect-result-content"
       );
 
-      // Handle drag events for detection
-      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-        detectUploadContainer.addEventListener(
-          eventName,
-          preventDefaults,
-          false
-        );
-      });
-
-      function preventDefaults(e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-
-      ["dragenter", "dragover"].forEach((eventName) => {
-        detectUploadContainer.addEventListener(eventName, highlight, false);
-      });
-
-      ["dragleave", "drop"].forEach((eventName) => {
-        detectUploadContainer.addEventListener(eventName, unhighlight, false);
-      });
-
-      function highlight() {
-        this.classList.add("highlight");
-      }
-
-      function unhighlight() {
-        this.classList.remove("highlight");
-      }
-
-      // Handle file drop for detection
-      detectUploadContainer.addEventListener("drop", handleDetectDrop, false);
-
-      function handleDetectDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-
-        if (files.length > 0) {
-          detectFileInput.files = files;
-          handleDetectFile();
-        }
-      }
-
       // Handle file selection for detection
-      detectFileInput.addEventListener("change", handleDetectFile, false);
-
       function handleDetectFile() {
         const file = detectFileInput.files[0];
         if (file) {
@@ -224,6 +230,13 @@
           reader.readAsDataURL(file);
         }
       }
+
+      // Set up drag and drop for detection
+      setupDragAndDrop(
+        detectUploadContainer,
+        detectFileInput,
+        handleDetectFile
+      );
 
       // Handle detect button click
       detectButton.addEventListener("click", detectForgery, false);
@@ -246,6 +259,10 @@
             body: formData,
           });
 
+          if (!response.ok) {
+            throw new Error(`Error: ${response.status} ${response.statusText}`);
+          }
+
           const result = await response.json();
 
           // Hide loader
@@ -259,19 +276,21 @@
             result.result === "forged" ? "result-forged" : "result-authentic"
           );
 
+          // Format probability as percentage (0-100)
           const probability = (result.probability * 100).toFixed(2);
 
+          // Create result content
           detectResultContent.innerHTML = `
-                    <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
-                    <p><strong>Confidence:</strong> ${probability}%</p>
-                    <div class="confidence-meter">
-                        <div class="confidence-bar" style="width: ${probability}%"></div>
-                        <div class="confidence-value">${probability}%</div>
-                    </div>
-                    <p><strong>Timestamp:</strong> ${new Date(
-                      result.timestamp * 1000
-                    ).toLocaleString()}</p>
-                `;
+            <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
+            <p><strong>Confidence:</strong> ${probability}%</p>
+            <div class="confidence-meter">
+                <div class="confidence-bar" style="width: ${probability}%"></div>
+                <div class="confidence-value">${probability}%</div>
+            </div>
+            <p><strong>Timestamp:</strong> ${new Date(
+              result.timestamp * 1000
+            ).toLocaleString()}</p>
+          `;
         } catch (error) {
           console.error("Error:", error);
 
@@ -282,11 +301,12 @@
           // Display error
           detectResult.style.display = "block";
           detectResult.className = "result-container";
-          detectResultContent.innerHTML = `<p class="error">Error: Failed to detect forgery. Please try again.</p>`;
+          detectResultContent.innerHTML = `<p class="error">Error: Failed to detect forgery. Please try again.</p>
+                                          <p>Details: ${error.message}</p>`;
         }
       }
 
-      // Localization tab functionality
+      // LOCALIZATION TAB SETUP
       const localizeUploadContainer = document.getElementById(
         "localize-upload-container"
       );
@@ -299,43 +319,7 @@
         "localize-result-content"
       );
 
-      // Handle drag events for localization
-      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-        localizeUploadContainer.addEventListener(
-          eventName,
-          preventDefaults,
-          false
-        );
-      });
-
-      ["dragenter", "dragover"].forEach((eventName) => {
-        localizeUploadContainer.addEventListener(eventName, highlight, false);
-      });
-
-      ["dragleave", "drop"].forEach((eventName) => {
-        localizeUploadContainer.addEventListener(eventName, unhighlight, false);
-      });
-
-      // Handle file drop for localization
-      localizeUploadContainer.addEventListener(
-        "drop",
-        handleLocalizeDrop,
-        false
-      );
-
-      function handleLocalizeDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-
-        if (files.length > 0) {
-          localizeFileInput.files = files;
-          handleLocalizeFile();
-        }
-      }
-
       // Handle file selection for localization
-      localizeFileInput.addEventListener("change", handleLocalizeFile, false);
-
       function handleLocalizeFile() {
         const file = localizeFileInput.files[0];
         if (file) {
@@ -351,6 +335,13 @@
           reader.readAsDataURL(file);
         }
       }
+
+      // Set up drag and drop for localization
+      setupDragAndDrop(
+        localizeUploadContainer,
+        localizeFileInput,
+        handleLocalizeFile
+      );
 
       // Handle localize button click
       localizeButton.addEventListener("click", localizeForgery, false);
@@ -373,6 +364,10 @@
             body: formData,
           });
 
+          if (!response.ok) {
+            throw new Error(`Error: ${response.status} ${response.statusText}`);
+          }
+
           const result = await response.json();
 
           // Hide loader
@@ -386,34 +381,35 @@
             result.result === "forged" ? "result-forged" : "result-authentic"
           );
 
+          // Format probability as percentage (0-100)
           const probability = (result.probability * 100).toFixed(2);
 
           let resultHtml = `
-                    <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
-                    <p><strong>Confidence:</strong> ${probability}%</p>
-                    <div class="confidence-meter">
-                        <div class="confidence-bar" style="width: ${probability}%"></div>
-                        <div class="confidence-value">${probability}%</div>
-                    </div>
-                `;
+            <p><strong>Result:</strong> ${result.result.toUpperCase()}</p>
+            <p><strong>Confidence:</strong> ${probability}%</p>
+            <div class="confidence-meter">
+                <div class="confidence-bar" style="width: ${probability}%"></div>
+                <div class="confidence-value">${probability}%</div>
+            </div>
+          `;
 
           if (result.result === "forged") {
             resultHtml += `
-                        <div class="comparison-container">
-                            <div class="comparison-image">
-                                <h4>Original Image</h4>
-                                <img src="${localizePreview.src}" class="thumbnail">
-                            </div>
-                            <div class="comparison-image">
-                                <h4>Forgery Map</h4>
-                                <img src="${API_BASE_URL}${result.forgery_map}" class="thumbnail">
-                            </div>
-                        </div>
-                    `;
+              <div class="comparison-container">
+                <div class="comparison-image">
+                  <h4>Original Image</h4>
+                  <img src="${localizePreview.src}" class="thumbnail">
+                </div>
+                <div class="comparison-image">
+                  <h4>Forgery Map</h4>
+                  <img src="${API_BASE_URL}${result.forgery_map}" class="thumbnail">
+                </div>
+              </div>
+            `;
 
             if (result.regions && result.regions.length > 0) {
               resultHtml += `<h4>Detected Suspicious Regions: ${result.regions.length}</h4>`;
-              resultHtml += `<ul>`;
+              resultHtml += `<ul class="regions-list">`;
               result.regions.forEach((region, index) => {
                 resultHtml += `<li>Region ${index + 1}: (x: ${region.x}, y: ${
                   region.y
@@ -436,11 +432,12 @@
           // Display error
           localizeResult.style.display = "block";
           localizeResult.className = "result-container";
-          localizeResultContent.innerHTML = `<p class="error">Error: Failed to localize forgery. Please try again.</p>`;
+          localizeResultContent.innerHTML = `<p class="error">Error: Failed to localize forgery. Please try again.</p>
+                                            <p>Details: ${error.message}</p>`;
         }
       }
 
-      // Batch processing tab functionality
+      // BATCH PROCESSING TAB SETUP
       const batchUploadContainer = document.getElementById(
         "batch-upload-container"
       );
@@ -460,39 +457,7 @@
       );
       const batchResultItems = document.getElementById("batch-result-items");
 
-      // Handle drag events for batch processing
-      ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-        batchUploadContainer.addEventListener(
-          eventName,
-          preventDefaults,
-          false
-        );
-      });
-
-      ["dragenter", "dragover"].forEach((eventName) => {
-        batchUploadContainer.addEventListener(eventName, highlight, false);
-      });
-
-      ["dragleave", "drop"].forEach((eventName) => {
-        batchUploadContainer.addEventListener(eventName, unhighlight, false);
-      });
-
-      // Handle file drop for batch processing
-      batchUploadContainer.addEventListener("drop", handleBatchDrop, false);
-
-      function handleBatchDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-
-        if (files.length > 0) {
-          batchFileInput.files = files;
-          handleBatchFile();
-        }
-      }
-
       // Handle file selection for batch processing
-      batchFileInput.addEventListener("change", handleBatchFile, false);
-
       function handleBatchFile() {
         const files = batchFileInput.files;
         if (files.length > 0) {
@@ -531,6 +496,9 @@
         }
       }
 
+      // Set up drag and drop for batch processing
+      setupDragAndDrop(batchUploadContainer, batchFileInput, handleBatchFile);
+
       // Handle batch process button click
       batchButton.addEventListener("click", processBatch, false);
 
@@ -558,6 +526,10 @@
             body: formData,
           });
 
+          if (!response.ok) {
+            throw new Error(`Error: ${response.status} ${response.statusText}`);
+          }
+
           const result = await response.json();
 
           // Hide loader
@@ -579,15 +551,15 @@
           ).length;
 
           batchResultContent.innerHTML = `
-                    <p><strong>Total Files:</strong> ${result.total}</p>
-                    <p><strong>Processed Successfully:</strong> ${result.successful}</p>
-                    <p><strong>Results:</strong></p>
-                    <ul>
-                        <li>Authentic: ${authenticCount}</li>
-                        <li>Forged: ${forgedCount}</li>
-                        <li>Errors: ${errorCount}</li>
-                    </ul>
-                `;
+            <p><strong>Total Files:</strong> ${result.total}</p>
+            <p><strong>Processed Successfully:</strong> ${result.successful}</p>
+            <p><strong>Results:</strong></p>
+            <ul>
+                <li>Authentic: ${authenticCount}</li>
+                <li>Forged: ${forgedCount}</li>
+                <li>Errors: ${errorCount}</li>
+            </ul>
+          `;
 
           // Display individual results
           batchResultItems.innerHTML = "";
@@ -599,9 +571,9 @@
             if ("error" in item) {
               resultItem.classList.add("batch-result-error");
               resultItem.innerHTML = `
-                            <p><strong>File:</strong> ${item.filename}</p>
-                            <p><strong>Error:</strong> ${item.error}</p>
-                        `;
+                <p><strong>File:</strong> ${item.filename}</p>
+                <p><strong>Error:</strong> ${item.error}</p>
+              `;
             } else {
               resultItem.classList.add(
                 item.result === "forged"
@@ -611,14 +583,14 @@
               const probability = (item.probability * 100).toFixed(2);
 
               resultItem.innerHTML = `
-                            <p><strong>File:</strong> ${item.filename}</p>
-                            <p><strong>Result:</strong> ${item.result.toUpperCase()}</p>
-                            <p><strong>Confidence:</strong> ${probability}%</p>
-                            <div class="confidence-meter">
-                                <div class="confidence-bar" style="width: ${probability}%"></div>
-                                <div class="confidence-value">${probability}%</div>
-                            </div>
-                        `;
+                <p><strong>File:</strong> ${item.filename}</p>
+                <p><strong>Result:</strong> ${item.result.toUpperCase()}</p>
+                <p><strong>Confidence:</strong> ${probability}%</p>
+                <div class="confidence-meter">
+                    <div class="confidence-bar" style="width: ${probability}%"></div>
+                    <div class="confidence-value">${probability}%</div>
+                </div>
+              `;
             }
 
             batchResultItems.appendChild(resultItem);
@@ -633,7 +605,8 @@
 
           // Display error
           batchResult.style.display = "block";
-          batchResultContent.innerHTML = `<p class="error">Error: Failed to process batch. Please try again.</p>`;
+          batchResultContent.innerHTML = `<p class="error">Error: Failed to process batch. Please try again.</p>
+                                          <p>Details: ${error.message}</p>`;
           batchResultItems.innerHTML = "";
         }
       }
