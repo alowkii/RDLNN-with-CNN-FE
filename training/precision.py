@@ -36,6 +36,20 @@ def precision_tuned_training(features_path, model_path, output_dir,
     Returns:
         Trained RegressionDLNN model
     """
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+    # Create output directory for plots
+    plots_dir = os.path.join(output_dir, 'plots')
+    os.makedirs(plots_dir, exist_ok=True)
+
+    # Ensure threshold is not None
+    if threshold is None:
+        threshold = 0.80
+        logger.info(f"No threshold provided, using default threshold: {threshold}")
+
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
@@ -156,8 +170,8 @@ def precision_tuned_training(features_path, model_path, output_dir,
     
     # Create diagnostic plots if enabled
     try:
-        plot_diagnostic_curves(y_test, confidences, history, output_dir)
-        logger.info(f"Diagnostic plots saved to {output_dir}")
+        plot_diagnostic_curves(y_test, confidences, history, plots_dir)
+        logger.info(f"Diagnostic plots saved to {plots_dir}")
     except Exception as e:
         logger.warning(f"Could not create diagnostic plots: {e}")
     
