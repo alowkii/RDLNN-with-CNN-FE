@@ -87,14 +87,15 @@ class RegressionDLNN:
                     nn.init.zeros_(m.bias)
     
     def fit(self, X: Union[np.ndarray, torch.Tensor], 
-            y: Union[np.ndarray, torch.Tensor], 
-            epochs: int = 50, 
-            learning_rate: float = 0.001, 
-            batch_size: int = 32, 
-            validation_split: float = 0.2, 
-            early_stopping: int = 10, 
-            use_fp16: bool = False, 
-            force_class_balance: bool = False) -> Dict[str, List[float]]:
+        y: Union[np.ndarray, torch.Tensor], 
+        epochs: int = 50, 
+        learning_rate: float = 0.001, 
+        batch_size: int = 32, 
+        validation_split: float = 0.2, 
+        early_stopping: int = 10, 
+        use_fp16: bool = False,
+        force_class_balance: bool = False,
+        class_weights: Dict[int, float] = None) -> Dict[str, List[float]]:
         """
         Train the RDLNN model with optimized training loop and balanced sampling
         
@@ -108,6 +109,7 @@ class RegressionDLNN:
             early_stopping: Number of epochs with no improvement after which training will stop
             use_fp16: Whether to use half precision (FP16) operations
             force_class_balance: Whether to enforce class balance during training
+            class_weights: Dictionary mapping class indices to weights (e.g. {0: 1.0, 1: 5.0})
             
         Returns:
             Training history (dictionary with loss and accuracy metrics)
@@ -150,29 +152,37 @@ class RegressionDLNN:
         class_counts = np.bincount(y_np.flatten().astype(int))
         total_samples = len(y_np)
         
-        # Calculate class weights inversely proportional to class frequencies
-        class_weights = {}
-        for i, count in enumerate(class_counts):
-            class_weights[i] = total_samples / (len(unique_classes) * count)
-        
-        # Print class weights
-        logger.info(f"Class weights: {class_weights}")
-        
-        # Use MUCH higher weight for minority class (forged)
-        # This is crucial to fix the "all one class" prediction problem
-        if force_class_balance:
-            pos_weight_value = 5.0  # Force very high weight for positive class
-            logger.info(f"Forcing positive class weight to {pos_weight_value}")
+        # Use provided class weights if given, otherwise calculate them
+        if class_weights is not None:
+            logger.info(f"Using provided class weights: {class_weights}")
+            # Get specific weights
+            neg_weight = class_weights.get(0, 1.0) 
+            pos_weight = class_weights.get(1, 1.0)
+            pos_weight_value = pos_weight / neg_weight  # Ratio for BCEWithLogitsLoss
         else:
-            pos_weight_value = class_weights[1]/class_weights[0]
+            # Calculate class weights inversely proportional to class frequencies
+            auto_class_weights = {}
+            for i, count in enumerate(class_counts):
+                auto_class_weights[i] = total_samples / (len(unique_classes) * count)
             
+            # Print class weights
+            logger.info(f"Calculated class weights: {auto_class_weights}")
+            
+            # Use MUCH higher weight for minority class (forged)
+            if force_class_balance:
+                pos_weight_value = 5.0  # Force very high weight for positive class
+                logger.info(f"Forcing positive class weight to {pos_weight_value}")
+            else:
+                pos_weight_value = auto_class_weights[1]/auto_class_weights[0]
+        
         # Update loss function to use weights
         weight_tensor = torch.tensor([pos_weight_value], device=self.device)
         logger.info(f"Using positive weight: {pos_weight_value:.4f}")
-        self.loss_fn = nn.BCEWithLogitsLoss(
-            pos_weight=weight_tensor
-        )
-            
+        
+        # Update the loss function if it hasn't been set by a custom loss like FocalLoss
+        if isinstance(self.loss_fn, torch.nn.BCEWithLogitsLoss):
+            self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=weight_tensor)
+        
         # Split data into training and validation sets using sklearn to ensure balance
         X_train, X_val, y_train, y_val = create_training_validation_split(
             X_np, y_np, validation_split=validation_split

@@ -132,12 +132,12 @@ def parse_arguments() -> argparse.Namespace:
     
     parser.add_argument('--epochs', 
                         type=int, 
-                        default=20,
+                        default=30,
                         help='Number of training epochs')
     
     parser.add_argument('--learning_rate', 
                         type=float, 
-                        default=0.001,
+                        default=0.002,
                         help='Learning rate for training')
     
     parser.add_argument('--training_method',

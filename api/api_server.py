@@ -35,7 +35,7 @@ batch_processor = None
 # Configuration
 config = {
     'detection_model_path': '../data/models/rdlnn_model.pth',
-    'localization_model_path': '../data/models/pdywt_localizer.pth',
+    'localization_model_path': '../data/models/cnn_localizer.pth',
     'upload_folder': './api/uploads',  # Temporary upload location
     'threshold': 0.6,
     'batch_size': 8,
@@ -615,7 +615,7 @@ def parse_args():
     # Model paths
     parser.add_argument('--detection-model', type=str, default='../data/models/rdlnn_model.pth',
                         help='Path to detection model')
-    parser.add_argument('--localization-model', type=str, default='../data/models/pdywt_localizer.pth',
+    parser.add_argument('--localization-model', type=str, default='../data/models/cnn_localizer.pth',
                         help='Path to localization model')
     
     # Directories

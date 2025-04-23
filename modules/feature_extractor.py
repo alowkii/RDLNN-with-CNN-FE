@@ -49,11 +49,17 @@ class PDyWaveletTransform:
 
     def _initialize_filters(self):
         """Initialize 2D separable wavelet filters"""
-        # Create 2D separable filters
-        self.low_filter_x = self.low_filter.view(1, 1, 1, 2)
-        self.low_filter_y = self.low_filter.view(1, 1, 2, 1)
-        self.high_filter_x = self.high_filter.view(1, 1, 1, 2)
-        self.high_filter_y = self.high_filter.view(1, 1, 2, 1)
+        # Create 2D separable filters - ensure proper reshaping
+        filter_len = self.low_filter.size(0)
+        half_len = filter_len // 2
+        
+        # For x direction filters
+        self.low_filter_x = self.low_filter[:half_len].view(1, 1, 1, half_len)
+        self.high_filter_x = self.high_filter[:half_len].view(1, 1, 1, half_len)
+        
+        # For y direction filters
+        self.low_filter_y = self.low_filter[half_len:].view(1, 1, half_len, 1)
+        self.high_filter_y = self.high_filter[half_len:].view(1, 1, half_len, 1)
 
     def transform(self, image_tensor: torch.Tensor) -> Dict[str, Tuple]:
         """

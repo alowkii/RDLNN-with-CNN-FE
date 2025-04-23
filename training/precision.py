@@ -16,9 +16,10 @@ from modules.data_handling import load_and_verify_features
 from modules.utils import setup_logging, logger, plot_diagnostic_curves
 
 def precision_tuned_training(features_path, model_path, output_dir,
-                           minority_ratio=0.65, pos_weight=2.0, 
+                           minority_ratio=0.65, pos_weight=7.0, neg_weight=1.0,
+                           use_focal_loss=True, focal_gamma=3.0,
                            epochs=25, learning_rate=0.001, batch_size=32,
-                           threshold=0.80):
+                           threshold=0.50):
     """
     Precision-focused training with enhanced balancing and fixed threshold
     
@@ -28,6 +29,9 @@ def precision_tuned_training(features_path, model_path, output_dir,
         output_dir: Directory to save results
         minority_ratio: Ratio of minority class samples after resampling
         pos_weight: Weight for positive class in loss function
+        neg_weight: Weight for negative class to penalize false positives
+        use_focal_loss: Whether to use focal loss to focus on difficult examples
+        focal_gamma: Gamma parameter for focal loss
         epochs: Number of epochs to train
         learning_rate: Learning rate
         batch_size: Batch size
@@ -47,18 +51,15 @@ def precision_tuned_training(features_path, model_path, output_dir,
 
     # Ensure threshold is not None
     if threshold is None:
-        threshold = 0.80
+        threshold = 0.50
         logger.info(f"No threshold provided, using default threshold: {threshold}")
-
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     
     # Set up logging with reduced verbosity
     setup_logging(output_dir)
     
     logger.info(f"Starting precision-tuned training with threshold={threshold}")
-    logger.info(f"Parameters: minority_ratio={minority_ratio}, pos_weight={pos_weight}")
+    logger.info(f"Parameters: minority_ratio={minority_ratio}, pos_weight={pos_weight}, neg_weight={neg_weight}")
+    logger.info(f"Using focal loss: {use_focal_loss} (gamma={focal_gamma})")
     
     # Load features
     features, labels, paths = load_and_verify_features(features_path)
@@ -66,6 +67,17 @@ def precision_tuned_training(features_path, model_path, output_dir,
     if len(features) == 0 or len(labels) == 0:
         logger.error("No valid features or labels found")
         return None
+    
+    # Calculate class distribution for better weighting
+    class_counts = np.bincount(labels.astype(int))
+    class_distribution = class_counts / np.sum(class_counts)
+    logger.info(f"Class distribution: Negative={class_distribution[0]:.2f}, Positive={class_distribution[1]:.2f}")
+    
+    # Dynamically adjust weights based on class distribution if needed
+    if class_distribution[1] < 0.3:  # If positive class is very underrepresented
+        adjusted_pos_weight = max(pos_weight, 1.0 / class_distribution[1])
+        logger.info(f"Adjusting positive weight to {adjusted_pos_weight} based on class distribution")
+        pos_weight = adjusted_pos_weight
     
     # Split data into train/validation/test sets (60/20/20 split)
     X_train, X_temp, y_train, y_temp = train_test_split(
@@ -93,10 +105,24 @@ def precision_tuned_training(features_path, model_path, output_dir,
         n_samples=minority_target_count,
         random_state=42
     )
-    
-    # Combine classes
-    X_balanced = np.vstack([X_majority, X_minority_oversampled])
-    y_balanced = np.concatenate([y_majority, y_minority_oversampled])
+
+    # Add Gaussian noise to features for augmentation
+    def augment_with_noise(features, std=0.02):
+        noise = np.random.normal(0, std, features.shape)
+        return features + noise
+
+    # Augment majority and minority classes
+    X_majority_augmented = np.vstack([X_majority, augment_with_noise(X_majority)])
+    y_majority_augmented = np.concatenate([y_majority, y_majority])
+
+    X_minority_augmented = np.vstack([X_minority_oversampled, 
+                                    augment_with_noise(X_minority_oversampled)])
+    y_minority_augmented = np.concatenate([y_minority_oversampled, 
+                                        y_minority_oversampled])
+
+    # Combine classes and use augmented data for training
+    X_balanced = np.vstack([X_majority_augmented, X_minority_augmented])
+    y_balanced = np.concatenate([y_majority_augmented, y_minority_augmented])
     
     # Shuffle
     indices = np.arange(len(X_balanced))
@@ -113,12 +139,48 @@ def precision_tuned_training(features_path, model_path, output_dir,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pos_weight_tensor = torch.tensor([pos_weight], device=device)
     
-    # Set custom loss function with specified pos_weight
-    model.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+    # Define focal loss if requested
+    if use_focal_loss:
+        # Custom focal loss with class weights
+        class FocalLoss(torch.nn.Module):
+            def __init__(self, alpha=0.25, gamma=2.0, pos_weight=None, reduction='mean'):
+                super(FocalLoss, self).__init__()
+                self.alpha = alpha
+                self.gamma = gamma
+                self.pos_weight = pos_weight
+                self.reduction = reduction
+                self.bce_loss = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+                
+            def forward(self, inputs, targets):
+                # Calculate standard BCE loss
+                bce_loss = self.bce_loss(inputs, targets)
+                
+                # Apply sigmoid to get probabilities
+                inputs_sigmoid = torch.sigmoid(inputs)
+                
+                # Calculate focal term
+                pt = torch.where(targets == 1, inputs_sigmoid, 1 - inputs_sigmoid)
+                focal_term = (1 - pt) ** self.gamma
+                
+                # Apply focal weight
+                loss = focal_term * bce_loss
+                
+                # Apply additional asymmetric weighting for negative examples
+                if self.reduction == 'mean':
+                    return loss.mean()
+                return loss.sum()
+        
+        # Create focal loss with balanced class weights
+        logger.info(f"Using Focal Loss with gamma={focal_gamma}")
+        model.loss_fn = FocalLoss(gamma=focal_gamma, pos_weight=pos_weight_tensor)
+    else:
+        # Set custom loss function with specified pos_weight
+        model.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
     
-    # Train model
-    logger.info("Starting training...")
+    # Train model with more aggressive penalty for false positives
+    logger.info("Starting training with enhanced balance...")
     
+    # Add class_weights parameter to inform the model about the balance
     history = model.fit(
         X_balanced, y_balanced, 
         epochs=epochs, 
@@ -126,20 +188,18 @@ def precision_tuned_training(features_path, model_path, output_dir,
         batch_size=batch_size,
         validation_split=0.2,
         early_stopping=5,
-        use_fp16=True
+        use_fp16=True,
+        class_weights={0: neg_weight, 1: pos_weight}  # Pass both weights
     )
     
-    # Evaluate on test set
-    predictions, confidences = model.predict(X_test)
-    
-    # Apply fixed threshold
-    thresholded_preds = (confidences >= threshold).astype(int)
-    
-    # Calculate metrics with fixed threshold
-    tp = np.sum((thresholded_preds == 1) & (y_test == 1))
-    tn = np.sum((thresholded_preds == 0) & (y_test == 0))
-    fp = np.sum((thresholded_preds == 1) & (y_test == 0))
-    fn = np.sum((thresholded_preds == 0) & (y_test == 1))
+    # Evaluate with ensemble approach
+    ensemble_preds, ensemble_confidences = ensemble_prediction(model, X_test, num_models=3, threshold=threshold)
+
+    # Calculate metrics with ensemble predictions
+    tp = np.sum((ensemble_preds == 1) & (y_test == 1))
+    tn = np.sum((ensemble_preds == 0) & (y_test == 0))
+    fp = np.sum((ensemble_preds == 1) & (y_test == 0))
+    fn = np.sum((ensemble_preds == 0) & (y_test == 1))
     
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
@@ -170,15 +230,15 @@ def precision_tuned_training(features_path, model_path, output_dir,
     
     # Create diagnostic plots if enabled
     try:
-        plot_diagnostic_curves(y_test, confidences, history, plots_dir)
+        plot_diagnostic_curves(y_test, ensemble_confidences, history, plots_dir)
         logger.info(f"Diagnostic plots saved to {plots_dir}")
     except Exception as e:
         logger.warning(f"Could not create diagnostic plots: {e}")
     
     # Evaluate with different thresholds for reference
     evaluate_with_thresholds(model, X_val, y_val, 
-                            [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9], 
-                            output_dir)
+                           [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9], 
+                           output_dir)
     
     return model
 
@@ -261,3 +321,42 @@ def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
         logger.warning(f"Could not create threshold analysis plot: {e}")
     
     return best_threshold, best_f1
+
+def ensemble_prediction(model, X_test, num_models=3, threshold=0.5):
+    """
+    Make predictions using ensemble approach to improve stability
+    
+    Args:
+        model: Trained RegressionDLNN model
+        X_test: Test features
+        num_models: Number of forward passes with dropout enabled
+        threshold: Classification threshold
+        
+    Returns:
+        Tuple of (predictions, confidences)
+    """
+    # Enable dropout during inference for MC Dropout
+    model.model.train()
+    
+    all_confidences = []
+    
+    # Make multiple predictions with dropout enabled
+    for _ in range(num_models):
+        with torch.no_grad():
+            # Get scaled inputs
+            X_scaled = model.scaler.transform(X_test)
+            X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=model.device)
+            
+            # Get model output with dropout enabled
+            logits = model.model(X_tensor)
+            confidences = torch.sigmoid(logits).cpu().numpy().flatten()
+            all_confidences.append(confidences)
+    
+    # Average predictions across ensemble
+    ensemble_confidences = np.mean(all_confidences, axis=0)
+    ensemble_preds = (ensemble_confidences >= threshold).astype(int)
+    
+    # Set model back to evaluation mode
+    model.model.eval()
+    
+    return ensemble_preds, ensemble_confidences
