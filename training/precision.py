@@ -10,6 +10,7 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.utils import resample
 from sklearn.model_selection import train_test_split
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 from modules.rdlnn import RegressionDLNN
 from modules.data_handling import load_and_verify_features
@@ -19,7 +20,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
                            minority_ratio=0.65, pos_weight=7.0, neg_weight=1.0,
                            use_focal_loss=True, focal_gamma=3.0,
                            epochs=25, learning_rate=0.001, batch_size=32,
-                           threshold=0.50):
+                           threshold=0.50, use_lr_scheduler=True):
     """
     Precision-focused training with enhanced balancing and fixed threshold
     
@@ -67,6 +68,25 @@ def precision_tuned_training(features_path, model_path, output_dir,
     if len(features) == 0 or len(labels) == 0:
         logger.error("No valid features or labels found")
         return None
+    
+    # Create model
+    input_dim = features.shape[1]
+    logger.info(f"Training model with input dimension: {input_dim}")
+    model = RegressionDLNN(input_dim, architecture='deep') # Use deep architecture for better performance
+    
+    # Create optimizer
+    optimizer = torch.optim.Adam(model.model.parameters(), lr=learning_rate)
+    
+    # Add learning rate scheduler
+    if use_lr_scheduler:
+        scheduler = CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=5,  # Restart every 5 epochs
+            T_mult=2,  # Multiply period by 2 at each restart
+            eta_min=learning_rate / 10,
+        )
+    else:
+        scheduler = None
     
     # Calculate class distribution for better weighting
     class_counts = np.bincount(labels.astype(int))
@@ -189,7 +209,8 @@ def precision_tuned_training(features_path, model_path, output_dir,
         validation_split=0.2,
         early_stopping=5,
         use_fp16=True,
-        class_weights={0: neg_weight, 1: pos_weight}  # Pass both weights
+        class_weights={0: neg_weight, 1: pos_weight},
+        scheduler=scheduler  # Pass scheduler to fit method
     )
     
     # Evaluate with ensemble approach

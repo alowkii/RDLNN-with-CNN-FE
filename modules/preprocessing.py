@@ -145,3 +145,31 @@ def compute_image_stats(ycbcr_tensor: torch.Tensor) -> Dict[str, Any]:
     }
     
     return stats
+
+def apply_feature_normalization(features, method='standard'):
+    """
+    Apply different normalization techniques to features
+    
+    Args:
+        features: Feature array
+        method: Normalization method ('standard', 'minmax', 'robust')
+        
+    Returns:
+        Normalized features
+    """
+    if method == 'standard':
+        # Standardization (zero mean, unit variance)
+        scaler = StandardScaler()
+        return scaler.fit_transform(features)
+    
+    elif method == 'minmax':
+        # Min-max scaling to [0,1]
+        scaler = MinMaxScaler()
+        return scaler.fit_transform(features)
+    
+    elif method == 'robust':
+        # Robust scaling using percentiles
+        scaler = RobustScaler()
+        return scaler.fit_transform(features)
+        
+    return features  # Return original if no method matches

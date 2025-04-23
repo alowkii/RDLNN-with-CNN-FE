@@ -25,58 +25,108 @@ class RegressionDLNN:
     Implemented with PyTorch and CUDA support with improved handling of imbalanced data
     """
     
-    def __init__(self, input_dim: int):
+    def __init__(self, input_dim: int, architecture='deep'):
         """
-        Initialize the RDLNN model
+        Initialize the RDLNN model with different architectures
         
         Args:
             input_dim: Number of input features
+            architecture: Model architecture type ('standard', 'deep', 'residual')
         """
         super(RegressionDLNN, self).__init__()
         
         # Check if CUDA is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Define the model architecture with improved layers
-        self.model = nn.Sequential(
-            # Input layer with larger size
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(0.5),
+        if architecture == 'deep':
+            # Deep architecture with more capacity
+            self.model = nn.Sequential(
+                # Input layer
+                nn.Linear(input_dim,
+                        512),
+                nn.BatchNorm1d(512),
+                nn.LeakyReLU(0.1),
+                nn.Dropout(0.5),
+                
+                # Hidden layers
+                nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
+                nn.LeakyReLU(0.1),
+                nn.Dropout(0.5),
+                
+                nn.Linear(256, 128),
+                nn.BatchNorm1d(128),
+                nn.LeakyReLU(0.1),
+                nn.Dropout(0.4),
+                
+                nn.Linear(128, 64),
+                nn.BatchNorm1d(64),
+                nn.LeakyReLU(0.1),
+                nn.Dropout(0.3),
+                
+                # Output layer
+                nn.Linear(64, 1)
+            ).to(self.device)
+        
+        elif architecture == 'residual':
+            # Define a residual block class
+            class ResidualBlock(nn.Module):
+                def __init__(self, dim):
+                    super().__init__()
+                    self.block = nn.Sequential(
+                        nn.Linear(dim, dim),
+                        nn.BatchNorm1d(dim),
+                        nn.LeakyReLU(0.1),
+                        nn.Linear(dim, dim),
+                        nn.BatchNorm1d(dim)
+                    )
+                    self.activation = nn.LeakyReLU(0.1)
+                    
+                def forward(self, x):
+                    return self.activation(x + self.block(x))
             
-            # Hidden layers
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(0.5),
+            # Create model with residual blocks
+            layers = []
+            # Input projection
+            layers.append(nn.Linear(input_dim, 256))
+            layers.append(nn.BatchNorm1d(256))
+            layers.append(nn.LeakyReLU(0.1))
             
-            nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
-            nn.LeakyReLU(0.01),
-            nn.Dropout(0.5),
+            # Residual blocks
+            for _ in range(3):
+                layers.append(ResidualBlock(256))
+                layers.append(nn.Dropout(0.4))
             
-            # Output layer - sigmoid is handled in loss function
-            nn.Linear(64, 1)
-        ).to(self.device)
+            # Output layers
+            layers.append(nn.Linear(256, 64))
+            layers.append(nn.BatchNorm1d(64))
+            layers.append(nn.LeakyReLU(0.1))
+            layers.append(nn.Dropout(0.3))
+            layers.append(nn.Linear(64, 1))
+            
+            self.model = nn.Sequential(*layers).to(self.device)
         
-        # Initialize weights using Xavier initialization
-        self._init_weights()
-        
-        # Define loss function - will be updated with class weights
-        self.loss_fn = nn.BCEWithLogitsLoss()
-        
-        # For feature normalization
-        self.scaler = StandardScaler()
-        
-        # Initialize gradient scaler for mixed precision training
-        self.scaler_amp = torch.amp.GradScaler("cuda") if torch.cuda.is_available() else None
-        
-        # Print device information
-        if torch.cuda.is_available():
-            logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
         else:
-            logger.info("Using CPU for computation")
+            # Original architecture (for backwards compatibility)
+            self.model = nn.Sequential(
+                # Same as your existing architecture
+                nn.Linear(input_dim, 256),
+                nn.BatchNorm1d(256),
+                nn.LeakyReLU(0.01),
+                nn.Dropout(0.5),
+                
+                nn.Linear(256, 128),
+                nn.BatchNorm1d(128),
+                nn.LeakyReLU(0.01),
+                nn.Dropout(0.5),
+                
+                nn.Linear(128, 64),
+                nn.BatchNorm1d(64),
+                nn.LeakyReLU(0.01),
+                nn.Dropout(0.5),
+                
+                nn.Linear(64, 1)
+            ).to(self.device)
         
     def _init_weights(self):
         """Initialize weights using Xavier initialization"""
@@ -95,7 +145,8 @@ class RegressionDLNN:
         early_stopping: int = 10, 
         use_fp16: bool = False,
         force_class_balance: bool = False,
-        class_weights: Dict[int, float] = None) -> Dict[str, List[float]]:
+        class_weights: Dict[int, float] = None,
+        scheduler = None) -> Dict[str, List[float]]:
         """
         Train the RDLNN model with optimized training loop and balanced sampling
         
@@ -124,6 +175,26 @@ class RegressionDLNN:
         
         logger.info(f"Training with learning rate: {learning_rate:.6f}")
         
+        if scheduler is None:
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=learning_rate,
+                weight_decay=1e-4,  # L2 regularization
+                betas=(0.9, 0.999)  # Default Adam parameters
+            )
+            
+            # Create default scheduler
+            self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer,
+                T_0=5,  # Restart every 5 epochs
+                T_mult=2,  # Multiply period by 2 at each restart
+                eta_min=learning_rate / 10,
+            )
+        else:
+            # Use provided scheduler and its optimizer
+            self.scheduler = scheduler
+            self.optimizer = scheduler.optimizer
+
         # Learning rate scheduler with warm restarts
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer,

@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import cv2
 from typing import Dict, List, Tuple, Union, Optional
+from scipy import stats
+from PIL import ImageChops
 
 from modules.utils import logger, clean_cuda_memory
 from modules.model import SimpleLocalizationModel
@@ -217,6 +219,71 @@ class PDyWaveletTransform:
                 LH_polar.squeeze(0).squeeze(0),
                 HL_polar.squeeze(0).squeeze(0),
                 HH_polar.squeeze(0).squeeze(0))
+    
+    def ensemble_predict(self, image_path, num_models=5, dropout_enabled=True):
+        """
+        Make ensemble predictions using MC Dropout
+        
+        Args:
+            image_path: Path to image
+            num_models: Number of forward passes
+            dropout_enabled: Whether to enable dropout during inference
+            
+        Returns:
+            Dictionary with prediction results
+        """
+        with torch.no_grad():
+            # Preprocess image
+            ycbcr_tensor = self.preprocess_image(image_path)
+            if ycbcr_tensor is None:
+                return {'error': 'Failed to preprocess image'}
+            
+            # Extract wavelet features
+            feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
+            
+            # Use RegressionDLNN model if available
+            if self.rdlnn_model:
+                # Get fixed-length feature vector
+                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                feature_vector = pooled_features.view(1, -1).cpu().numpy()
+                
+                # Enable dropout during inference if requested
+                if dropout_enabled:
+                    self.rdlnn_model.model.train()  # Set to train mode to enable dropout
+                else:
+                    self.rdlnn_model.model.eval()
+                
+                # Make multiple predictions
+                all_probs = []
+                for _ in range(num_models):
+                    # Get prediction using the model
+                    X_scaled = self.rdlnn_model.scaler.transform(feature_vector)
+                    X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=self.rdlnn_model.device)
+                    logits = self.rdlnn_model.model(X_tensor)
+                    probs = torch.sigmoid(logits).cpu().numpy().flatten()
+                    all_probs.append(probs)
+                
+                # Aggregate predictions
+                all_probs = np.array(all_probs)
+                mean_prob = np.mean(all_probs, axis=0)[0]
+                std_prob = np.std(all_probs, axis=0)[0]
+                
+                # Make final prediction
+                threshold = getattr(self.rdlnn_model, 'threshold', 0.5)
+                prediction = 1 if mean_prob >= threshold else 0
+                
+                # Set model back to evaluation mode
+                self.rdlnn_model.model.eval()
+                
+                return {
+                    'prediction': prediction,
+                    'probability': float(mean_prob),
+                    'uncertainty': float(std_prob),
+                    'threshold': threshold
+                }
+                
+            # Fallback to regular detection if RegressionDLNN not available
+            return self.detect(image_path)
 
 
 # Modified MLP for flat feature vectors
@@ -616,6 +683,49 @@ class PDyWTCNNDetector:
         feature_tensor = torch.stack(feature_tensors[:12], dim=0)  # Take first 12 features
         
         return feature_tensor
+    
+    def extract_ela_features(self, image_path, quality=90):
+        """
+        Extract Error Level Analysis features
+        
+        Args:
+            image_path: Path to image
+            quality: JPEG compression quality
+            
+        Returns:
+            ELA feature vector
+        """
+        try:
+            # Load original image
+            original = Image.open(image_path).convert('RGB')
+            
+            # Save and reload with JPEG compression
+            temp_path = 'temp_ela.jpg'
+            original.save(temp_path, 'JPEG', quality=quality)
+            compressed = Image.open(temp_path).convert('RGB')
+            
+            # Calculate difference and amplify
+            ela_image = np.array(ImageChops.difference(original, compressed))
+            ela_image = ela_image * 20  # Amplify difference
+            
+            # Extract statistical features from ELA
+            features = []
+            for channel in range(3):
+                channel_data = ela_image[:,:,channel].flatten()
+                features.extend([
+                    np.mean(channel_data),
+                    np.std(channel_data),
+                    np.max(channel_data),
+                    stats.skew(channel_data),
+                    stats.kurtosis(channel_data)
+                ])
+            
+            os.remove(temp_path)
+            return np.array(features)
+        
+        except Exception as e:
+            logger.error(f"Error extracting ELA features: {e}")
+            return np.zeros(15)  # Return zeros if extraction fails
     
     def detect(self, image_path):
         """
