@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --font-poppins: "Poppins", sans-serif;
+  --color-gunmetal: #292c36;
+  --color-romansilver: #848a98;
+  --color-coolgrey: #8e99ac;
+  --color-silversand: #bdc2c7;
+  --color-metallicsilver: #a1a7af;
+}
+
+a.active {
+  @apply text-gunmetal border-b-1 border-solid border-gunmetal transition-all duration-200 ease-in-out;
+}
+
+@layer components {
+  .image-drop-area {
+    @apply text-gunmetal text-center h-100 outline-1 border-1 border-gunmetal bg-silversand rounded-lg p-4 text-center;
+  }
+}
+
+@layer utilities {
+  a {
+    @apply text-romansilver hover:text-gunmetal transition-all duration-200 ease-in-out;
+  }
+}

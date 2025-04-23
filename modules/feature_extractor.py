@@ -27,7 +27,7 @@ class PDyWaveletTransform:
     capture rotation invariant features which are useful for forgery detection.
     """
     
-    def __init__(self, use_gpu: bool = True, decomposition_level: int = 2):
+    def __init__(self, use_gpu: bool = True, decomposition_level: int = 3):
         """
         Initialize the PDyWT transformer
         
@@ -39,8 +39,8 @@ class PDyWaveletTransform:
         self.decomposition_level = decomposition_level
         
         # Define Haar wavelet filters (simplest wavelet family)
-        self.low_filter = torch.tensor([0.5, 0.5], dtype=torch.float32, device=self.device)
-        self.high_filter = torch.tensor([0.5, -0.5], dtype=torch.float32, device=self.device)
+        self.low_filter = torch.tensor([0.4830, 0.8365, 0.2241, -0.1294], dtype=torch.float32, device=self.device)
+        self.high_filter = torch.tensor([-0.1294, -0.2241, 0.8365, -0.4830], dtype=torch.float32, device=self.device)
         
         # Pre-compute 2D separable filters
         self._initialize_filters()
@@ -519,7 +519,7 @@ class PDyWTCNNDetector:
         self.localization_model.eval()
         
         # Set threshold for classification
-        self.threshold = 0.7
+        self.threshold = 0.6
         logger.info(f"PDyWT-CNN detector initialized on {self.device}")
         
     def preprocess_image(self, image_path):
