@@ -480,6 +480,8 @@ class RegressionDLNN:
             val_recall = val_tp / (val_tp + val_fn) if (val_tp + val_fn) > 0 else 0
             val_f1 = 2 * val_precision * val_recall / (val_precision + val_recall) if (val_precision + val_recall) > 0 else 0
 
+            best_val_metric = 0.0
+            
             # Early stopping based on F1 score
             if val_f1 > best_val_metric:
                 best_val_metric = val_f1
