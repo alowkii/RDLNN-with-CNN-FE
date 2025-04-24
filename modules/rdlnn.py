@@ -625,7 +625,11 @@ class RegressionDLNN:
             'scheduler_state_dict': self.scheduler.state_dict() if hasattr(self, 'scheduler') else None,
             'scaler': self.scaler,
             'input_dim': self.model[0].in_features,
-            'feature_selector': self.feature_selector if hasattr(self, 'feature_selector') else None
+            'feature_selector': getattr(self, 'feature_selector', None),
+            'feature_extractor_config': {
+                'expected_features': self.model[0].in_features,
+                'feature_types': ['pdywt', 'ela', 'noise', 'jpeg_ghost', 'dct']
+            }
         }
         
         # Add threshold if it exists

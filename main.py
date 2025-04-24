@@ -567,7 +567,6 @@ def test_single_image(args: argparse.Namespace) -> None:
     logger.info(f"Processing single image: {args.image_path}")
     start_time = time.time()
     
-    # Replace this code section in test_single_image function
     try:
         # Initialize detector
         detector = PDyWTCNNDetector()
@@ -579,12 +578,31 @@ def test_single_image(args: argparse.Namespace) -> None:
             logger.error("Error: Failed to preprocess image")
             return
         
-        # Extract wavelet features
+        # Extract wavelet features only
         feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
         
         # Get a fixed-length feature vector by average pooling
         pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
         feature_vector = pooled_features.view(1, -1).cpu().numpy()
+        
+        # Get expected feature dimension from model
+        expected_dim = 25
+        if hasattr(model, 'scaler') and hasattr(model.scaler, 'n_features_in_'):
+            expected_dim = model.scaler.n_features_in_
+            logger.info(f"Model expects features: {expected_dim}")
+        
+        # Log the extracted feature shape
+        logger.info(f"Extracted feature vector shape: {feature_vector.shape}")
+        
+        # Ensure correct dimensions - either pad or truncate
+        if feature_vector.shape[1] > expected_dim:
+            logger.info(f"Truncating features from {feature_vector.shape[1]} to {expected_dim}")
+            feature_vector = feature_vector[:, :expected_dim]
+        elif feature_vector.shape[1] < expected_dim:
+            padded_vector = np.zeros((1, expected_dim))
+            padded_vector[:, :feature_vector.shape[1]] = feature_vector
+            logger.info(f"Padding features from {feature_vector.shape[1]} to {expected_dim}")
+            feature_vector = padded_vector
         
         # Make prediction
         _, confidences = model.predict(feature_vector)
@@ -609,7 +627,7 @@ def test_single_image(args: argparse.Namespace) -> None:
         logger.info(f"Result saved to {result_file}")
         
     except Exception as e:
-        logger.error(f"Error processing image: {e}", exc_info=args.debug)
+        logger.error(f"Error processing image: {e}")
     
     elapsed_time = time.time() - start_time
     logger.info(f"Processing completed in {elapsed_time:.2f} seconds")

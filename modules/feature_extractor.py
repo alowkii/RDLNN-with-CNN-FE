@@ -798,10 +798,10 @@ class PDyWTCNNDetector:
             # Extract all our additional features
             ela_vector = self.extract_ela_features(image_path)
             noise_vector = self.extract_noise_features(image_path)
+            
+            # Extract other features defined in your extraction pipeline
             jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
             dct_vector = self.extract_dct_features(image_path)
-            lbp_vector = self.extract_lbp_features(image_path)
-            quality_vector = self.extract_quality_features(image_path)
             
             # Combine all features into a single vector
             combined_vector = np.concatenate([
@@ -809,9 +809,7 @@ class PDyWTCNNDetector:
                 ela_vector, 
                 noise_vector,
                 jpeg_ghost_vector,
-                dct_vector,
-                lbp_vector,
-                quality_vector
+                dct_vector
             ])
             
             return combined_vector
@@ -1264,55 +1262,6 @@ class PDyWTCNNDetector:
         intersection = (pred_binary * target).sum()
         return (2. * intersection + smooth) / (pred_binary.sum() + target.sum() + smooth)
 
-
-def demo_forgery_detection(image_path, model_path=None, localization_model_path=None, output_dir='results'):
-    """
-    Demonstration of forgery detection and localization
-    
-    Args:
-        image_path: Path to the image file to analyze
-        model_path: Path to pretrained detection model
-        localization_model_path: Path to pretrained localization model
-        output_dir: Directory to save visualization results
-    """
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Initialize detector
-    detector = PDyWTCNNDetector(
-        model_path=model_path,
-        localization_model_path=localization_model_path
-    )
-    
-    # Perform forgery detection
-    detection_result = detector.detect(image_path)
-    
-    # Print detection results
-    if 'error' in detection_result:
-        print(f"Error: {detection_result['error']}")
-        return
-    
-    prediction = "FORGED" if detection_result['prediction'] == 1 else "AUTHENTIC"
-    confidence = detection_result['probability']
-    print(f"Detection Result: {prediction}")
-    print(f"Confidence: {confidence:.4f}")
-    
-    # Perform localization if image is predicted as forged
-    if detection_result['prediction'] == 1:
-        print("Localizing potentially forged regions...")
-        output_path = os.path.join(output_dir, os.path.basename(image_path).split('.')[0] + '_forgery_map.png')
-        localization_result = detector.localize(image_path, save_path=output_path)
-        
-        if 'error' in localization_result:
-            print(f"Localization error: {localization_result['error']}")
-        else:
-            print(f"Localization result saved to {output_path}")
-            
-            if localization_result['region_proposals']:
-                print(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
-                for i, region in enumerate(localization_result['region_proposals']):
-                    print(f"Region {i+1}: x={region['x']}, y={region['y']}, width={region['width']}, height={region['height']}")
-
     def extract_jpeg_ghost_features(self, image_path, quality_range=[65, 75, 85, 95]):
         """
         Extract JPEG ghost features to detect compression inconsistencies
@@ -1536,6 +1485,55 @@ def demo_forgery_detection(image_path, model_path=None, localization_model_path=
         except Exception as e:
             logger.error(f"Error extracting quality features: {e}")
             return np.zeros(15)
+        
+def demo_forgery_detection(image_path, model_path=None, localization_model_path=None, output_dir='results'):
+    """
+    Demonstration of forgery detection and localization
+    
+    Args:
+        image_path: Path to the image file to analyze
+        model_path: Path to pretrained detection model
+        localization_model_path: Path to pretrained localization model
+        output_dir: Directory to save visualization results
+    """
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Initialize detector
+    detector = PDyWTCNNDetector(
+        model_path=model_path,
+        localization_model_path=localization_model_path
+    )
+    
+    # Perform forgery detection
+    detection_result = detector.detect(image_path)
+    
+    # Print detection results
+    if 'error' in detection_result:
+        print(f"Error: {detection_result['error']}")
+        return
+    
+    prediction = "FORGED" if detection_result['prediction'] == 1 else "AUTHENTIC"
+    confidence = detection_result['probability']
+    print(f"Detection Result: {prediction}")
+    print(f"Confidence: {confidence:.4f}")
+    
+    # Perform localization if image is predicted as forged
+    if detection_result['prediction'] == 1:
+        print("Localizing potentially forged regions...")
+        output_path = os.path.join(output_dir, os.path.basename(image_path).split('.')[0] + '_forgery_map.png')
+        localization_result = detector.localize(image_path, save_path=output_path)
+        
+        if 'error' in localization_result:
+            print(f"Localization error: {localization_result['error']}")
+        else:
+            print(f"Localization result saved to {output_path}")
+            
+            if localization_result['region_proposals']:
+                print(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
+                for i, region in enumerate(localization_result['region_proposals']):
+                    print(f"Region {i+1}: x={region['x']}, y={region['y']}, width={region['width']}, height={region['height']}")
+
 
 if __name__ == "__main__":
     import argparse
