@@ -22,6 +22,10 @@ def setup_logging(output_dir: str, level: int = logging.INFO) -> None:
         output_dir: Directory to store log files
         level: Logging level
     """
+    # Clear any existing handlers to prevent duplication
+    if logger.handlers:
+        logger.handlers.clear()
+    
     # Create formatter
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',

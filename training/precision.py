@@ -292,7 +292,7 @@ def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
         thresholds: List of threshold values to try
         output_dir: Directory to save threshold analysis results
     """
-    # Get raw predictions
+    # Make predictions directly using the model, which handles feature selection internally
     _, confidences = model.predict(X_val)
     
     results = []

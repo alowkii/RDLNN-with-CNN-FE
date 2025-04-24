@@ -327,40 +327,8 @@ def train_mode(args: argparse.Namespace) -> None:
             batch_size=args.batch_size,
             threshold=args.threshold
         )
-
         
-        # Optimize the threshold on validation set
-        logger.info("Optimizing decision threshold...")
-        model = RegressionDLNN.load(args.model_path)
-        # Try different thresholds to find optimal F1 score
-        thresholds = np.arange(0.1, 0.9, 0.05)
-        best_f1 = 0
-        best_threshold = 0.5
-
-        for thresh in thresholds:
-            preds, probs = model.predict(X_val)
-            preds = (probs >= thresh).astype(int)
-            
-            # Calculate F1 score
-            true_pos = np.sum((preds == 1) & (y_val == 1))
-            false_pos = np.sum((preds == 1) & (y_val == 0))
-            false_neg = np.sum((preds == 0) & (y_val == 1))
-            
-            precision = true_pos / (true_pos + false_pos) if (true_pos + false_pos) > 0 else 0
-            recall = true_pos / (true_pos + false_neg) if (true_pos + false_neg) > 0 else 0
-            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-            
-            if f1 > best_f1:
-                best_f1 = f1
-                best_threshold = thresh
-
-        logger.info(f"Optimal threshold: {best_threshold:.2f} with F1 score: {best_f1:.4f}")
-        model.threshold = best_threshold
-        model.save(args.model_path)
-        logger.info(f"Model saved with optimized threshold ({best_threshold:.2f}) to {args.model_path}")
-        
-    else:
-        logger.error(f"Unknown training method: {args.training_method}")
+        logger.info(f"Model saved with threshold to {args.model_path}")
 
 def test_mode(args: argparse.Namespace) -> None:
     """Test the model on images in the input directory
