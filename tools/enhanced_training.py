@@ -106,7 +106,7 @@ def train_enhanced_model(features_path, model_path, output_dir, ensemble_size=3,
             learning_rate=learning_rate,
             batch_size=batch_size,
             validation_split=0.2,
-            early_stopping=5,
+            early_stopping=10,
             use_fp16=True,
             force_class_balance=True
         )

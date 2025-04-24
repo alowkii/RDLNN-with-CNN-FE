@@ -76,7 +76,7 @@ def train_with_balanced_sampling(features_path, model_path, output_dir, epochs=2
         learning_rate=learning_rate,
         batch_size=batch_size,
         validation_split=0.2,
-        early_stopping=5,
+        early_stopping=10,
         use_fp16=True,
         force_class_balance=True  # Use strengthened class balancing
     )
@@ -162,7 +162,7 @@ def train_with_oversampling(features_path, model_path, output_dir, epochs=20,
         learning_rate=learning_rate,
         batch_size=batch_size,
         validation_split=0.2,  # Use default validation split
-        early_stopping=5,
+        early_stopping=10,
         use_fp16=True
     )
     
@@ -260,7 +260,7 @@ def combined_approach(features_path, model_path, output_dir, epochs=20,
         learning_rate=learning_rate,
         batch_size=batch_size,
         validation_split=0.2,  # Use built-in validation split
-        early_stopping=5,
+        early_stopping=10,
         use_fp16=True,
         force_class_balance=True  # Use class balancing
     )

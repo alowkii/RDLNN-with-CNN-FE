@@ -211,7 +211,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
         learning_rate=learning_rate,
         batch_size=batch_size,
         validation_split=0.2,
-        early_stopping=5,
+        early_stopping=10,
         use_fp16=True,
         class_weights={0: neg_weight, 1: pos_weight},
         scheduler=scheduler  # Pass scheduler to fit method
