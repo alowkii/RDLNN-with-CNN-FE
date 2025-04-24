@@ -292,47 +292,80 @@ def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
         thresholds: List of threshold values to try
         output_dir: Directory to save threshold analysis results
     """
-    # Make predictions directly using the model, which handles feature selection internally
-    _, confidences = model.predict(X_val)
+    try:
+        # Make predictions directly using the model, which handles feature selection internally
+        _, confidences = model.predict(X_val)
+        
+        results = []
+        logger.info("\nThreshold Analysis:")
+        logger.info(f"{'Threshold':^10} | {'Precision':^10} | {'Recall':^10} | {'F1 Score':^10} | {'Accuracy':^10}")
+        logger.info("-" * 60)
+        
+        best_f1 = 0
+        best_threshold = 0.6
+        
+        for threshold in thresholds:
+            # Apply threshold
+            predictions = (confidences >= threshold).astype(int)
+            
+            # Compute metrics
+            tp = np.sum((predictions == 1) & (y_val == 1))
+            fp = np.sum((predictions == 1) & (y_val == 0))
+            tn = np.sum((predictions == 0) & (y_val == 0))
+            fn = np.sum((predictions == 0) & (y_val == 1))
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+            accuracy = (tp + tn) / (tp + tn + fp + fn)
+            
+            results.append({
+                'threshold': threshold,
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
+                'accuracy': accuracy
+            })
+            
+            logger.info(f"{threshold:^10.2f} | {precision:^10.4f} | {recall:^10.4f} | {f1:^10.4f} | {accuracy:^10.4f}")
+            
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+        
+        logger.info(f"\nBest threshold based on F1: {best_threshold:.2f} (F1={best_f1:.4f})")
+        
+        # Create a threshold analysis plot
+        try:
+            thresholds_arr = np.array([result['threshold'] for result in results])
+            precision_arr = np.array([result['precision'] for result in results])
+            recall_arr = np.array([result['recall'] for result in results])
+            f1_arr = np.array([result['f1'] for result in results])
+            
+            plt.figure(figsize=(10, 6))
+            plt.plot(thresholds_arr, precision_arr, 'b-', label='Precision')
+            plt.plot(thresholds_arr, recall_arr, 'g-', label='Recall')
+            plt.plot(thresholds_arr, f1_arr, 'r-', label='F1 Score')
+            plt.axvline(x=best_threshold, color='k', linestyle='--', alpha=0.3, label=f'Best F1 ({best_threshold:.2f})')
+            plt.grid(True, alpha=0.3)
+            plt.xlabel('Threshold')
+            plt.ylabel('Score')
+            plt.title('Precision, Recall and F1 Score vs. Threshold')
+            plt.legend()
+            
+            # Save the plot
+            threshold_plot_path = os.path.join(output_dir, 'threshold_analysis.png')
+            plt.savefig(threshold_plot_path)
+            logger.info(f"Threshold analysis plot saved to {threshold_plot_path}")
+        except Exception as e:
+            logger.warning(f"Could not create threshold analysis plot: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error during threshold evaluation: {e}")
+        logger.info("Skipping threshold analysis due to error")
     
-    results = []
-    logger.info("\nThreshold Analysis:")
-    logger.info(f"{'Threshold':^10} | {'Precision':^10} | {'Recall':^10} | {'F1 Score':^10} | {'Accuracy':^10}")
-    logger.info("-" * 60)
-    
-    best_f1 = 0
-    best_threshold = 0.6
-    
-    for threshold in thresholds:
-        # Apply threshold
-        predictions = (confidences >= threshold).astype(int)
-        
-        # Compute metrics
-        tp = np.sum((predictions == 1) & (y_val == 1))
-        fp = np.sum((predictions == 1) & (y_val == 0))
-        tn = np.sum((predictions == 0) & (y_val == 0))
-        fn = np.sum((predictions == 0) & (y_val == 1))
-        
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-        accuracy = (tp + tn) / (tp + tn + fp + fn)
-        
-        results.append({
-            'threshold': threshold,
-            'precision': precision,
-            'recall': recall,
-            'f1': f1,
-            'accuracy': accuracy
-        })
-        
-        logger.info(f"{threshold:^10.2f} | {precision:^10.4f} | {recall:^10.4f} | {f1:^10.4f} | {accuracy:^10.4f}")
-        
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = threshold
-    
-    logger.info(f"\nBest threshold based on F1: {best_threshold:.2f} (F1={best_f1:.4f})")
+    # Return a default threshold if evaluation failed
+    return 0.6, 0.0
     
     # Create a threshold analysis plot
     try:

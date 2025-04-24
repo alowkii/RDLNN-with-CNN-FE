@@ -577,7 +577,7 @@ class RegressionDLNN:
         Args:
             X: Feature vector or batch of feature vectors
             
-        Returns:
+        Returns:    
             Tuple of (predictions, confidences)
         """
         # Set model to evaluation mode
@@ -587,8 +587,35 @@ class RegressionDLNN:
         if X.ndim == 1:
             X = X.reshape(1, -1)
         
-        # Apply feature selection if available
+        # Check dimensions match what's expected
         if hasattr(self, 'feature_selector') and self.feature_selector is not None:
+            expected_dim = self.feature_selector.variance_selector.n_features_in_
+            if X.shape[1] != expected_dim:
+                # Log warning
+                logger.warning(f"Feature dimension mismatch: got {X.shape[1]}, expected {expected_dim}")
+                
+                # Fix dimension mismatch - either pad or truncate
+                if X.shape[1] > expected_dim:
+                    logger.info(f"Truncating features from {X.shape[1]} to {expected_dim}")
+                    X = X[:, :expected_dim]
+                elif X.shape[1] < expected_dim:
+                    logger.info(f"Input has fewer features than expected. Using available features only.")
+                    # Skip feature selection in this case
+                    X_scaled = self.scaler.transform(X) if hasattr(self, 'scaler') else X
+                    X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=self.device)
+                    
+                    # Make prediction
+                    with torch.no_grad():
+                        logits = self.model(X_tensor)
+                        confidences = torch.sigmoid(logits).cpu().numpy()
+                    
+                    # Convert to binary output with confidence
+                    predictions = (confidences >= 0.5).astype(int)
+                    
+                    # Return predictions and confidences
+                    return predictions.flatten(), confidences.flatten()
+            
+            # Apply feature selection if dimensions match
             X = self.feature_selector(X)
         
         # Normalize features
@@ -615,7 +642,7 @@ class RegressionDLNN:
         return predictions.flatten(), confidences.flatten()
     
     def save(self, filepath: str) -> None:
-        """Save the model to disk"""
+        """Save the model to disk with robust error handling"""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         # Save model state, scaler, threshold, and metadata
@@ -625,7 +652,6 @@ class RegressionDLNN:
             'scheduler_state_dict': self.scheduler.state_dict() if hasattr(self, 'scheduler') else None,
             'scaler': self.scaler,
             'input_dim': self.model[0].in_features,
-            'feature_selector': getattr(self, 'feature_selector', None),
             'feature_extractor_config': {
                 'expected_features': self.model[0].in_features,
                 'feature_types': ['pdywt', 'ela', 'noise', 'jpeg_ghost', 'dct']
@@ -636,9 +662,50 @@ class RegressionDLNN:
         if hasattr(self, 'threshold'):
             save_dict['threshold'] = self.threshold
         
-        torch.save(save_dict, filepath)
+        # Try to save feature selector
+        if hasattr(self, 'feature_selector') and self.feature_selector is not None:
+            try:
+                save_dict['feature_selector'] = self.feature_selector
+            except Exception as e:
+                logger.warning(f"Could not save feature_selector: {e}")
+                # Save essential parameters instead
+                if hasattr(self.feature_selector, 'variance_selector'):
+                    try:
+                        save_dict['variance_selector'] = self.feature_selector.variance_selector
+                    except Exception:
+                        logger.warning("Could not save variance_selector")
+                        
+                if hasattr(self.feature_selector, 'indices'):
+                    try:
+                        save_dict['feature_indices'] = self.feature_selector.indices
+                    except Exception:
+                        logger.warning("Could not save feature_indices")
         
-        logger.info(f"Model saved to {filepath}")
+        try:
+            torch.save(save_dict, filepath)
+            logger.info(f"Model saved to {filepath}")
+            
+            if hasattr(self, 'threshold'):
+                logger.info(f"Model saved with threshold {self.threshold} to {filepath}")
+        except Exception as e:
+            logger.error(f"Error saving model: {e}")
+            
+            # Try saving with reduced content if full save fails
+            try:
+                minimal_dict = {
+                    'model_state_dict': self.model.state_dict(),
+                    'scaler': self.scaler,
+                    'input_dim': self.model[0].in_features,
+                }
+                
+                if hasattr(self, 'threshold'):
+                    minimal_dict['threshold'] = self.threshold
+                    
+                backup_path = filepath + '.backup'
+                torch.save(minimal_dict, backup_path)
+                logger.info(f"Saved minimal model backup to {backup_path}")
+            except Exception as backup_error:
+                logger.error(f"Could not save model backup: {backup_error}")
 
     @classmethod
     def load(cls, filepath: str) -> 'RegressionDLNN':

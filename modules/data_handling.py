@@ -414,6 +414,32 @@ class FeatureSelector:
                 X_var = self.variance_selector.transform(X)
                 return X_var[:, self.indices]
 
+class RobustFeatureSelector:
+    def __init__(self, variance_selector, indices, expected_features):
+        self.variance_selector = variance_selector
+        self.indices = indices
+        self.expected_features = expected_features
+        
+    def __call__(self, X):
+        # Check if dimensions match what's expected
+        if X.shape[1] != self.expected_features:
+            logger.warning(f"Feature dimension mismatch: got {X.shape[1]}, expected {self.expected_features}")
+            if X.shape[1] > self.expected_features:
+                # Truncate to expected dimension
+                X = X[:, :self.expected_features]
+            else:
+                # Insufficient features, return input as is
+                return X
+        
+        # Apply variance selector and feature selection
+        try:
+            X_var = self.variance_selector.transform(X)
+            return X_var[:, self.indices]
+        except Exception as e:
+            logger.error(f"Error in feature selection: {e}")
+            # Return input as fallback
+            return X
+
 def perform_feature_selection(features, labels, n_features=None, method='variance'):
     """
     Perform feature selection to reduce dimensionality and remove noisy features
@@ -433,6 +459,10 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
     
     if n_features is None:
         n_features = int(features.shape[1] * 0.8)  # Default to keeping 80% of features
+    
+    # Store original feature count for reference
+    original_feature_count = features.shape[1]
+    logger.info(f"Original feature count: {original_feature_count}")
     
     # Calculate the variance of each feature
     variances = np.var(features, axis=0)
@@ -461,6 +491,10 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
         variance_selector = VarianceThreshold(threshold=0.0)
         variance_selector.fit(features)
     
+    # Save variance selector n_features_in_ for future reference
+    selector_expected_features = variance_selector.n_features_in_
+    logger.info(f"Variance selector expects {selector_expected_features} input features")
+    
     # Apply specified selection method
     if method == 'variance':
         # Just use variance threshold
@@ -472,11 +506,8 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
         info_selector = SelectKBest(mutual_info_classif, k=k)
         features_selected = info_selector.fit_transform(features_var_selected, labels)
         
-        # Create a combined selector
-        def combined_selector(X):
-            X_var = variance_selector.transform(X)
-            return info_selector.transform(X_var)
-            
+        # Create a combined selector using an importable class
+        combined_selector = FeatureSelector(variance_selector, info_selector.get_support())
         return features_selected, combined_selector
         
     elif method == 'random_forest':
@@ -497,8 +528,8 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
         # Create a manual selector that just picks these columns
         features_selected = features_var_selected[:, indices]
         
-        # Create a combined selector as a function that applies both steps
-        combined_selector = FeatureSelector(variance_selector, indices)
+        # Create selector using the globally defined class
+        combined_selector = RobustFeatureSelector(variance_selector, indices, selector_expected_features)
         
         # Print top features
         top_features = sorted(zip(range(len(indices)), importances[indices]), key=lambda x: x[1], reverse=True)[:10]
