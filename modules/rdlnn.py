@@ -325,6 +325,10 @@ class RegressionDLNN:
                 # Move inputs and targets to device
                 inputs = inputs.to(self.device)
                 targets = targets.to(self.device)
+
+                if inputs.size(0) == 1:
+                    logger.warning("Skipping batch with only one sample - BatchNorm requires at least 2 samples")
+                    continue
                 
                 # Zero the gradients
                 self.optimizer.zero_grad()
@@ -406,6 +410,10 @@ class RegressionDLNN:
                     # Move inputs and targets to device
                     inputs = inputs.to(self.device)
                     targets = targets.to(self.device)
+
+                    if inputs.size(0) == 1:
+                        logger.warning("Skipping batch with only one sample - BatchNorm requires at least 2 samples")
+                        continue
 
                     # Check if batch size is > 1 for BatchNorm
                     if inputs.size(0) == 1:
