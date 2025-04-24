@@ -17,10 +17,10 @@ from modules.data_handling import load_and_verify_features
 from modules.utils import setup_logging, logger, plot_diagnostic_curves
 
 def precision_tuned_training(features_path, model_path, output_dir,
-                           minority_ratio=0.65, pos_weight=7.0, neg_weight=1.0,
-                           use_focal_loss=True, focal_gamma=3.0,
-                           epochs=25, learning_rate=0.001, batch_size=32,
-                           threshold=0.50, use_lr_scheduler=True):
+                           minority_ratio=0.8, pos_weight=10.0, neg_weight=1.0,
+                           use_focal_loss=True, focal_gamma=2.0,
+                           epochs=50, learning_rate=0.003, batch_size=32,
+                           threshold=0.5, use_lr_scheduler=True):
     """
     Precision-focused training with enhanced balancing and fixed threshold
     
@@ -36,7 +36,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
         epochs: Number of epochs to train
         learning_rate: Learning rate
         batch_size: Batch size
-        threshold: Fixed classification threshold (0.80 for optimal precision/F1)
+        threshold: Fixed classification threshold (0.60 for optimal precision/F1)
         
     Returns:
         Trained RegressionDLNN model
@@ -52,7 +52,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
 
     # Ensure threshold is not None
     if threshold is None:
-        threshold = 0.50
+        threshold = 0.60
         logger.info(f"No threshold provided, using default threshold: {threshold}")
     
     # Set up logging with reduced verbosity
@@ -79,12 +79,15 @@ def precision_tuned_training(features_path, model_path, output_dir,
     
     # Add learning rate scheduler
     if use_lr_scheduler:
-        scheduler = CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=5,  # Restart every 5 epochs
-            T_mult=2,  # Multiply period by 2 at each restart
-            eta_min=learning_rate / 10,
-        )
+        # Create a combined warmup + cosine annealing scheduler
+        def lr_lambda(epoch):
+            # Warmup for first 5 epochs
+            if epoch < 5:
+                return epoch / 5
+            # Cosine annealing after warmup
+            return 0.5 * (1 + np.cos(np.pi * (epoch - 5) / (epochs - 5)))
+        
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     else:
         scheduler = None
     
@@ -162,6 +165,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
     # Define focal loss if requested
     if use_focal_loss:
         # Custom focal loss with class weights
+        # Replace the FocalLoss class in training/precision.py
         class FocalLoss(torch.nn.Module):
             def __init__(self, alpha=0.25, gamma=2.0, pos_weight=None, reduction='mean'):
                 super(FocalLoss, self).__init__()
@@ -178,14 +182,14 @@ def precision_tuned_training(features_path, model_path, output_dir,
                 # Apply sigmoid to get probabilities
                 inputs_sigmoid = torch.sigmoid(inputs)
                 
-                # Calculate focal term
-                pt = torch.where(targets == 1, inputs_sigmoid, 1 - inputs_sigmoid)
-                focal_term = (1 - pt) ** self.gamma
+                # Calculate focal term with different weighting for positive/negative examples
+                p_t = torch.where(targets == 1, inputs_sigmoid, 1 - inputs_sigmoid)
+                alpha_t = torch.where(targets == 1, self.alpha, 1 - self.alpha)
                 
-                # Apply focal weight
-                loss = focal_term * bce_loss
+                # Apply focal weighting
+                focal_weight = alpha_t * (1 - p_t) ** self.gamma
+                loss = focal_weight * bce_loss
                 
-                # Apply additional asymmetric weighting for negative examples
                 if self.reduction == 'mean':
                     return loss.mean()
                 return loss.sum()
@@ -261,7 +265,7 @@ def precision_tuned_training(features_path, model_path, output_dir,
                            [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9], 
                            output_dir)
     
-    return model
+    return model, X_val, y_val
 
 def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
     """
@@ -283,7 +287,7 @@ def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
     logger.info("-" * 60)
     
     best_f1 = 0
-    best_threshold = 0.5
+    best_threshold = 0.6
     
     for threshold in thresholds:
         # Apply threshold

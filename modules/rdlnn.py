@@ -19,6 +19,35 @@ from tqdm import tqdm
 from modules.utils import logger, plot_diagnostic_curves, clean_cuda_memory
 from modules.data_handling import create_training_validation_split, create_dataloaders, get_class_weights
 
+def mixup_data(x, y, alpha=0.2):
+    """Applies Mixup augmentation to the data"""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = x.shape[0]
+    index = torch.randperm(batch_size)
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_features, out_features):
+        super(ResidualBlock, self).__init__()
+        self.block = nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.BatchNorm1d(out_features),
+            nn.LeakyReLU(0.1),
+            nn.Linear(out_features, out_features),
+            nn.BatchNorm1d(out_features)
+        )
+        self.relu = nn.LeakyReLU(0.1)
+        
+    def forward(self, x):
+        return self.relu(x + self.block(x))
+
 class RegressionDLNN:
     """
     Regression Deep Learning Neural Network (RDLNN) for image forgery detection
@@ -37,54 +66,40 @@ class RegressionDLNN:
         
         # Check if CUDA is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
         if architecture == 'deep':
-            # Deep architecture with more capacity
             self.model = nn.Sequential(
                 # Input layer
-                nn.Linear(input_dim,
-                        512),
+                nn.Linear(input_dim, 512),
                 nn.BatchNorm1d(512),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(0.5),
+                nn.Dropout(0.4),  # Reduced from 0.5
                 
-                # Hidden layers
+                # First hidden layer with residual connection
+                ResidualBlock(512, 512),
+                nn.Dropout(0.3),
+                
+                # Second hidden layer
                 nn.Linear(512, 256),
                 nn.BatchNorm1d(256),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(0.5),
+                nn.Dropout(0.3),
                 
+                # Third hidden layer with residual connection
+                ResidualBlock(256, 256),
+                nn.Dropout(0.2),
+                
+                # Fourth hidden layer
                 nn.Linear(256, 128),
                 nn.BatchNorm1d(128),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(0.4),
-                
-                nn.Linear(128, 64),
-                nn.BatchNorm1d(64),
-                nn.LeakyReLU(0.1),
-                nn.Dropout(0.3),
+                nn.Dropout(0.2),
                 
                 # Output layer
-                nn.Linear(64, 1)
+                nn.Linear(128, 1)
             ).to(self.device)
         
         elif architecture == 'residual':
-            # Define a residual block class
-            class ResidualBlock(nn.Module):
-                def __init__(self, dim):
-                    super().__init__()
-                    self.block = nn.Sequential(
-                        nn.Linear(dim, dim),
-                        nn.BatchNorm1d(dim),
-                        nn.LeakyReLU(0.1),
-                        nn.Linear(dim, dim),
-                        nn.BatchNorm1d(dim)
-                    )
-                    self.activation = nn.LeakyReLU(0.1)
-                    
-                def forward(self, x):
-                    return self.activation(x + self.block(x))
-            
             # Create model with residual blocks
             layers = []
             # Input projection
@@ -325,8 +340,13 @@ class RegressionDLNN:
                 if use_fp16 and self.device.type == 'cuda':
                     # Using mixed precision
                     with torch.amp.autocast("cuda"):
-                        outputs = self.model(inputs)
-                        loss = self.loss_fn(outputs, targets)
+                        if torch.rand(1).item() < 0.5:
+                            inputs_mixed, targets_a, targets_b, lam = mixup_data(inputs, targets)
+                            outputs = self.model(inputs_mixed)
+                            loss = lam * self.loss_fn(outputs, targets_a) + (1 - lam) * self.loss_fn(outputs, targets_b)
+                        else:
+                            outputs = self.model(inputs)
+                            loss = self.loss_fn(outputs, targets)
                     
                     # Scale loss and do backward pass
                     self.scaler_amp.scale(loss).backward()
@@ -432,42 +452,27 @@ class RegressionDLNN:
             # Update learning rate after each epoch
             self.scheduler.step()
             
-            # Early stopping check
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
+            # Calculate F1 score on validation set
+            val_preds = (torch.sigmoid(outputs) >= 0.5).float()
+            val_tp = torch.sum((val_preds == 1) & (targets == 1)).item()
+            val_fp = torch.sum((val_preds == 1) & (targets == 0)).item()
+            val_fn = torch.sum((val_preds == 0) & (targets == 1)).item()
+
+            val_precision = val_tp / (val_tp + val_fp) if (val_tp + val_fp) > 0 else 0
+            val_recall = val_tp / (val_tp + val_fn) if (val_tp + val_fn) > 0 else 0
+            val_f1 = 2 * val_precision * val_recall / (val_precision + val_recall) if (val_precision + val_recall) > 0 else 0
+
+            # Early stopping based on F1 score
+            if val_f1 > best_val_metric:
+                best_val_metric = val_f1
                 early_stopping_counter = 0
                 # Save best model state
                 best_model_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
-                logger.info(f"[OK] New best validation loss: {best_val_loss:.6f}")
+                logger.info(f"[OK] New best validation F1 score: {best_val_metric:.6f}")
             else:
                 early_stopping_counter += 1
-                logger.info(f"! Validation loss did not improve. Early stopping counter: {early_stopping_counter}/{early_stopping}")
-                
-                if early_stopping_counter >= early_stopping:
-                    logger.info("\n" + "="*80)
-                    logger.info(f"EARLY STOPPING TRIGGERED (after {epoch+1} epochs)")
-                    logger.info("="*80)
-                    
-                    # Check if model is just predicting one class
-                    unique_preds, counts = np.unique(val_preds, return_counts=True)
-                    pred_dist = {int(k): int(v) for k, v in zip(unique_preds, counts)}
-                    
-                    if len(pred_dist) == 1:
-                        only_class = list(pred_dist.keys())[0]
-                        logger.warning(f"WARNING: Model is predicting ONLY class {only_class} for ALL samples!")
-                        logger.warning("This suggests the model hasn't learned to differentiate between classes.")
-                        logger.info("Suggestions:")
-                        logger.info("1. Increase learning rate (try 0.001 or 0.005)")
-                        logger.info("2. Train for more epochs")
-                        logger.info("3. Check feature quality/usefulness")
-                        logger.info("4. Consider using a different model architecture")
-                    else:
-                        logger.info(f"Final prediction distribution: {pred_dist}")
-                    
-                    # Restore best model state
-                    self.model.load_state_dict(best_model_state)
-                    break
-            
+                logger.info(f"! Validation F1 did not improve. Early stopping counter: {early_stopping_counter}/{early_stopping}")
+                        
             # Store history
             history['train_loss'].append(avg_train_loss)
             history['train_acc'].append(train_accuracy)

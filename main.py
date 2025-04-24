@@ -149,7 +149,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--threshold',
                     type=float,
                     default=None,
-                    help='Override classification threshold (default: use model\'s threshold or 0.7)')
+                    help='Override classification threshold (default: use model\'s threshold or 0.6)')
     
     parser.add_argument('--debug', 
                         action='store_true', 
@@ -158,6 +158,26 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--localize', 
                         action='store_true',
                         help='Perform forgery localization on detected forgeries')
+
+    parser.add_argument('--focal_gamma', 
+                    type=float, 
+                    default=2.0,
+                    help='Gamma parameter for focal loss')
+
+    parser.add_argument('--pos_weight', 
+                        type=float, 
+                        default=10.0,
+                        help='Weight for positive class in loss function')
+
+    parser.add_argument('--minority_ratio', 
+                        type=float, 
+                        default=0.8,
+                        help='Ratio of minority class samples after resampling')
+
+    parser.add_argument('--learning_rate', 
+                        type=float, 
+                        default=0.003,
+                        help='Initial learning rate for training')
 
     return parser.parse_args()
 
@@ -266,15 +286,50 @@ def train_mode(args: argparse.Namespace) -> None:
         )
     elif args.training_method == 'precision':
         logger.info(f"Using precision-tuned training method with threshold {args.threshold}")
-        precision_tuned_training(
+        model, X_val, y_val = precision_tuned_training(
             args.features_path,
             args.model_path,
             args.output_dir,
+            minority_ratio=args.minority_ratio,
+            pos_weight=args.pos_weight,
+            focal_gamma=args.focal_gamma,
             epochs=args.epochs, 
             learning_rate=args.learning_rate,
             batch_size=args.batch_size,
             threshold=args.threshold
         )
+
+        
+        # Optimize the threshold on validation set
+        logger.info("Optimizing decision threshold...")
+        model = RegressionDLNN.load(args.model_path)
+        # Try different thresholds to find optimal F1 score
+        thresholds = np.arange(0.1, 0.9, 0.05)
+        best_f1 = 0
+        best_threshold = 0.5
+
+        for thresh in thresholds:
+            preds, probs = model.predict(X_val)
+            preds = (probs >= thresh).astype(int)
+            
+            # Calculate F1 score
+            true_pos = np.sum((preds == 1) & (y_val == 1))
+            false_pos = np.sum((preds == 1) & (y_val == 0))
+            false_neg = np.sum((preds == 0) & (y_val == 1))
+            
+            precision = true_pos / (true_pos + false_pos) if (true_pos + false_pos) > 0 else 0
+            recall = true_pos / (true_pos + false_neg) if (true_pos + false_neg) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+            
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = thresh
+
+        logger.info(f"Optimal threshold: {best_threshold:.2f} with F1 score: {best_f1:.4f}")
+        model.threshold = best_threshold
+        model.save(args.model_path)
+        logger.info(f"Model saved with optimized threshold ({best_threshold:.2f}) to {args.model_path}")
+        
     else:
         logger.error(f"Unknown training method: {args.training_method}")
 
@@ -298,7 +353,7 @@ def test_mode(args: argparse.Namespace) -> None:
     model = RegressionDLNN.load(args.model_path)
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.7)
+    threshold = getattr(model, 'threshold', 0.6)
     logger.info(f"Using classification threshold: {threshold}")
     
     # Precompute features if not already done
@@ -471,7 +526,7 @@ def test_single_image(args: argparse.Namespace) -> None:
     model = RegressionDLNN.load(args.model_path)
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.7)
+    threshold = getattr(model, 'threshold', 0.6)
     logger.info(f"Using classification threshold: {threshold}")
 
     if args.threshold:

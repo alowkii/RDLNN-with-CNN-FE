@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 from typing import Optional, Tuple, Dict, Any, Union
 from modules.utils import logger
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 
 def preprocess_image(image_path: str) -> Optional[torch.Tensor]:
     """

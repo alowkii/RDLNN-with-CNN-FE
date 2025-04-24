@@ -269,7 +269,7 @@ class PDyWaveletTransform:
                 std_prob = np.std(all_probs, axis=0)[0]
                 
                 # Make final prediction
-                threshold = getattr(self.rdlnn_model, 'threshold', 0.5)
+                threshold = getattr(self.rdlnn_model, 'threshold', 0.6)
                 prediction = 1 if mean_prob >= threshold else 0
                 
                 # Set model back to evaluation mode
