@@ -73,7 +73,7 @@ class RegressionDLNN:
                 nn.Linear(input_dim, 512),
                 nn.BatchNorm1d(512),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(0.4),  # Reduced from 0.5
+                nn.Dropout(0.5),
                 
                 # First hidden layer with residual connection
                 ResidualBlock(512, 512),
@@ -481,7 +481,7 @@ class RegressionDLNN:
             val_f1 = 2 * val_precision * val_recall / (val_precision + val_recall) if (val_precision + val_recall) > 0 else 0
 
             best_val_metric = 0.0
-            
+
             # Early stopping based on F1 score
             if val_f1 > best_val_metric:
                 best_val_metric = val_f1
