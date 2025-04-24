@@ -405,6 +405,15 @@ def create_dataloaders(X_train, X_val, y_train, y_val, batch_size=32, num_worker
     
     return train_loader, val_loader
 
+class FeatureSelector:
+            def __init__(self, variance_selector, indices):
+                self.variance_selector = variance_selector
+                self.indices = indices
+                
+            def __call__(self, X):
+                X_var = self.variance_selector.transform(X)
+                return X_var[:, self.indices]
+
 def perform_feature_selection(features, labels, n_features=None, method='variance'):
     """
     Perform feature selection to reduce dimensionality and remove noisy features
@@ -487,15 +496,6 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
         
         # Create a manual selector that just picks these columns
         features_selected = features_var_selected[:, indices]
-
-        class FeatureSelector:
-            def __init__(self, variance_selector, indices):
-                self.variance_selector = variance_selector
-                self.indices = indices
-                
-            def __call__(self, X):
-                X_var = self.variance_selector.transform(X)
-                return X_var[:, self.indices]
         
         # Create a combined selector as a function that applies both steps
         combined_selector = FeatureSelector(variance_selector, indices)
