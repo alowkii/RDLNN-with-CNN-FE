@@ -487,12 +487,18 @@ def perform_feature_selection(features, labels, n_features=None, method='varianc
         
         # Create a manual selector that just picks these columns
         features_selected = features_var_selected[:, indices]
+
+        class FeatureSelector:
+            def __init__(self, variance_selector, indices):
+                self.variance_selector = variance_selector
+                self.indices = indices
+                
+            def __call__(self, X):
+                X_var = self.variance_selector.transform(X)
+                return X_var[:, self.indices]
         
         # Create a combined selector as a function that applies both steps
-        def combined_selector(X):
-            X_var = variance_selector.transform(X)
-            # Manual column selection instead of using SelectFromModel
-            return X_var[:, indices]
+        combined_selector = FeatureSelector(variance_selector, indices)
         
         # Print top features
         top_features = sorted(zip(range(len(indices)), importances[indices]), key=lambda x: x[1], reverse=True)[:10]

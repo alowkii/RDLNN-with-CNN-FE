@@ -171,7 +171,6 @@ def precision_tuned_training(features_path, model_path, output_dir,
     # Create model
     input_dim = features.shape[1]
     logger.info(f"Training model with input dimension: {input_dim}")
-    model = RegressionDLNN(input_dim)
     
     # Create pos_weight tensor on the correct device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
