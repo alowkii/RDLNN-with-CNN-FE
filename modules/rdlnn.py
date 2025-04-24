@@ -345,6 +345,11 @@ class RegressionDLNN:
                             outputs = self.model(inputs_mixed)
                             loss = lam * self.loss_fn(outputs, targets_a) + (1 - lam) * self.loss_fn(outputs, targets_b)
                         else:
+                            # Check if batch size is > 1 for BatchNorm
+                            if inputs.size(0) == 1:
+                                # Skip this batch as BatchNorm requires > 1 sample
+                                continue
+
                             outputs = self.model(inputs)
                             loss = self.loss_fn(outputs, targets)
                     
@@ -401,6 +406,11 @@ class RegressionDLNN:
                     # Move inputs and targets to device
                     inputs = inputs.to(self.device)
                     targets = targets.to(self.device)
+
+                    # Check if batch size is > 1 for BatchNorm
+                    if inputs.size(0) == 1:
+                        # Skip this batch as BatchNorm requires > 1 sample
+                        continue
                     
                     if use_fp16 and self.device.type == 'cuda':
                         with torch.amp.autocast("cuda"):

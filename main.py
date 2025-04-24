@@ -137,7 +137,7 @@ def parse_arguments() -> argparse.Namespace:
     
     parser.add_argument('--learning_rate', 
                         type=float, 
-                        default=0.002,
+                        default=0.003,
                         help='Learning rate for training')
     
     parser.add_argument('--training_method',
@@ -173,11 +173,6 @@ def parse_arguments() -> argparse.Namespace:
                         type=float, 
                         default=0.8,
                         help='Ratio of minority class samples after resampling')
-
-    parser.add_argument('--learning_rate', 
-                        type=float, 
-                        default=0.003,
-                        help='Initial learning rate for training')
 
     return parser.parse_args()
 
