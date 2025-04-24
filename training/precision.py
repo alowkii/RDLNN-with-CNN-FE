@@ -67,13 +67,28 @@ def precision_tuned_training(features_path, model_path, output_dir,
     
     if len(features) == 0 or len(labels) == 0:
         logger.error("No valid features or labels found")
-        return None
+        return None, None, None
+    
+    # Apply feature selection
+    from modules.data_handling import perform_feature_selection
+    logger.info("Performing feature selection...")
+    selected_features, feature_selector = perform_feature_selection(
+        features, labels, method='random_forest', n_features=int(features.shape[1] * 0.7)
+    )
+    
+    logger.info(f"Selected {selected_features.shape[1]} features out of {features.shape[1]}")
+    
+    # Now we should use the selected features instead of original features
+    features = selected_features
     
     # Create model
-    input_dim = features.shape[1]
+    input_dim = features.shape[1]  # Use the dimension of selected features!
     logger.info(f"Training model with input dimension: {input_dim}")
     model = RegressionDLNN(input_dim, architecture='deep') # Use deep architecture for better performance
     
+    # Store the feature selector in the model
+    model.feature_selector = feature_selector
+
     # Create optimizer
     optimizer = torch.optim.Adam(model.model.parameters(), lr=learning_rate)
     

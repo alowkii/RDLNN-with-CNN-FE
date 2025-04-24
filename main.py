@@ -75,9 +75,9 @@ def parse_arguments() -> argparse.Namespace:
     )
     
     parser.add_argument('--localization_model_path', 
-                    type=str, 
-                    default='data/models/pdywt_localizer.pth',
-                    help='Path to localization model')
+                        type=str, 
+                        default='data/models/pdywt_localizer.pth',
+                        help='Path to localization model')
                     
     parser.add_argument('--mode', 
                         choices=['train', 'test', 'precompute', 'single', 'analyze', 'localize'], 
@@ -147,9 +147,9 @@ def parse_arguments() -> argparse.Namespace:
                         help='Training method to use')
     
     parser.add_argument('--threshold',
-                    type=float,
-                    default=None,
-                    help='Override classification threshold (default: use model\'s threshold or 0.6)')
+                        type=float,
+                        default=None,
+                        help='Override classification threshold (default: use model\'s threshold or 0.6)')
     
     parser.add_argument('--debug', 
                         action='store_true', 
@@ -160,9 +160,9 @@ def parse_arguments() -> argparse.Namespace:
                         help='Perform forgery localization on detected forgeries')
 
     parser.add_argument('--focal_gamma', 
-                    type=float, 
-                    default=2.0,
-                    help='Gamma parameter for focal loss')
+                        type=float, 
+                        default=2.0,
+                        help='Gamma parameter for focal loss')
 
     parser.add_argument('--pos_weight', 
                         type=float, 
@@ -173,6 +173,17 @@ def parse_arguments() -> argparse.Namespace:
                         type=float, 
                         default=0.8,
                         help='Ratio of minority class samples after resampling')
+
+    parser.add_argument('--feature_selection', 
+                        type=str,
+                        choices=['none', 'variance', 'mutual_info', 'random_forest'],
+                        default='random_forest',
+                        help='Feature selection method')
+
+    parser.add_argument('--feature_ratio', 
+                        type=float,
+                        default=0.8,
+                        help='Ratio of features to select (0.0-1.0)')
 
     return parser.parse_args()
 
@@ -248,17 +259,40 @@ def train_mode(args: argparse.Namespace) -> None:
         logger.info("Precomputing features for training...")
         precompute_mode(args)
     
-    # Use the selected training method
+    # Load features
+    features, labels, paths = load_and_verify_features(args.features_path)
+    
+    # Apply feature selection
+    from modules.data_handling import perform_feature_selection
+    logger.info("Performing feature selection...")
+    selected_features, feature_selector = perform_feature_selection(
+        features, labels, method='random_forest', n_features=int(features.shape[1] * 0.8)
+    )
+    
+    logger.info(f"Selected {selected_features.shape[1]} features out of {features.shape[1]}")
+    
+    # Save selected features
+    selected_features_path = os.path.splitext(args.features_path)[0] + "_selected.npz"
+    np.savez(
+        selected_features_path,
+        features=selected_features,
+        labels=labels,
+        paths=paths
+    )
+    logger.info(f"Selected features saved to {selected_features_path}")
+    
+    # Use the selected training method with selected features
     if args.training_method == 'balanced':
         logger.info("Using balanced training method with weighted sampling")
         train_with_balanced_sampling(
-            args.features_path,
+            selected_features_path,
             args.model_path,
             args.output_dir,
             args.epochs,
             args.learning_rate,
             args.batch_size
         )
+        
     elif args.training_method == 'oversampling':
         logger.info("Using oversampling training method")
         train_with_oversampling(

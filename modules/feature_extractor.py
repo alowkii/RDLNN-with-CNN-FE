@@ -716,8 +716,8 @@ class PDyWTCNNDetector:
                     np.mean(channel_data),
                     np.std(channel_data),
                     np.max(channel_data),
-                    stats.skew(channel_data),
-                    stats.kurtosis(channel_data)
+                    stats.skew(channel_data) if len(channel_data) > 0 else 0,
+                    stats.kurtosis(channel_data) if len(channel_data) > 0 else 0
                 ])
             
             os.remove(temp_path)
@@ -726,6 +726,99 @@ class PDyWTCNNDetector:
         except Exception as e:
             logger.error(f"Error extracting ELA features: {e}")
             return np.zeros(15)  # Return zeros if extraction fails
+
+    def extract_noise_features(self, image_path, kernel_size=3):
+        """
+        Extract noise pattern features for forgery detection
+        
+        Args:
+            image_path: Path to image
+            kernel_size: Size of the median filter kernel
+            
+        Returns:
+            Noise feature vector
+        """
+        try:
+            # Load image as grayscale and convert to float
+            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            if image is None:
+                return np.zeros(10)  # Return zeros if image loading fails
+                
+            image = image.astype(np.float32)
+            
+            # Apply median filter to estimate noise-free image
+            denoised = cv2.medianBlur(image, kernel_size)
+            
+            # Extract noise by subtracting denoised image from original
+            noise = image - denoised
+            
+            # Calculate noise statistics for the whole image
+            features = [
+                np.mean(noise),
+                np.std(noise),
+                np.median(noise),
+                stats.skew(noise.flatten()) if len(noise.flatten()) > 0 else 0,
+                stats.kurtosis(noise.flatten()) if len(noise.flatten()) > 0 else 0,
+                np.percentile(noise, 25),
+                np.percentile(noise, 75),
+                np.min(noise),
+                np.max(noise),
+                np.sum(np.abs(noise))
+            ]
+            
+            return np.array(features)
+            
+        except Exception as e:
+            logger.error(f"Error extracting noise features: {e}")
+            return np.zeros(10)  # Return zeros with expected feature length
+        
+    def extract_features(self, image_path):
+        """
+        Extract comprehensive features from an image
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Combined feature vector from multiple feature extractors
+        """
+        try:
+            # Get basic PDyWT features
+            ycbcr_tensor = self.preprocess_image(image_path)
+            if ycbcr_tensor is None:
+                return None
+                
+            # Extract wavelet features
+            feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
+            
+            # Get a fixed-length feature vector by average pooling
+            pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+            pdywt_vector = pooled_features.view(-1).cpu().numpy()
+            
+            # Extract all our additional features
+            ela_vector = self.extract_ela_features(image_path)
+            noise_vector = self.extract_noise_features(image_path)
+            jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
+            dct_vector = self.extract_dct_features(image_path)
+            lbp_vector = self.extract_lbp_features(image_path)
+            quality_vector = self.extract_quality_features(image_path)
+            
+            # Combine all features into a single vector
+            combined_vector = np.concatenate([
+                pdywt_vector, 
+                ela_vector, 
+                noise_vector,
+                jpeg_ghost_vector,
+                dct_vector,
+                lbp_vector,
+                quality_vector
+            ])
+            
+            return combined_vector
+            
+        except Exception as e:
+            logger.error(f"Error extracting features from {image_path}: {e}")
+            return None
     
     def detect(self, image_path):
         """
@@ -1220,6 +1313,229 @@ def demo_forgery_detection(image_path, model_path=None, localization_model_path=
                 for i, region in enumerate(localization_result['region_proposals']):
                     print(f"Region {i+1}: x={region['x']}, y={region['y']}, width={region['width']}, height={region['height']}")
 
+    def extract_jpeg_ghost_features(self, image_path, quality_range=[65, 75, 85, 95]):
+        """
+        Extract JPEG ghost features to detect compression inconsistencies
+        
+        Args:
+            image_path: Path to image
+            quality_range: Range of JPEG quality factors to test
+            
+        Returns:
+            Ghost feature vector
+        """
+        try:
+            # Load original image
+            original = np.array(Image.open(image_path).convert('RGB'))
+            
+            # Calculate features across different quality factors
+            features = []
+            
+            for quality in quality_range:
+                # Save and reload with specific JPEG compression
+                temp_path = 'temp_ghost.jpg'
+                Image.fromarray(original).save(temp_path, 'JPEG', quality=quality)
+                compressed = np.array(Image.open(temp_path).convert('RGB'))
+                
+                # Calculate ghost residual
+                ghost = np.abs(original.astype(float) - compressed.astype(float))
+                
+                # Extract statistics from different regions
+                h, w, _ = ghost.shape
+                region_stats = []
+                
+                # Divide image into 2x2 regions
+                for i in range(2):
+                    for j in range(2):
+                        region = ghost[i*h//2:(i+1)*h//2, j*w//2:(j+1)*w//2]
+                        # Get statistics for each channel
+                        for c in range(3):
+                            region_c = region[:,:,c]
+                            region_stats.extend([
+                                np.mean(region_c),
+                                np.std(region_c),
+                                np.max(region_c),
+                            ])
+                
+                # Add consistency measures
+                region_means = [stats[0] for stats in region_stats[::3]]
+                features.append(np.var(region_means))
+                features.extend(region_stats)
+                
+                # Clean up
+                os.remove(temp_path)
+                
+            return np.array(features)
+        
+        except Exception as e:
+            logger.error(f"Error extracting JPEG ghost features: {e}")
+            return np.zeros(len(quality_range) * 25)  # Approximate length
+        
+    def extract_dct_features(self, image_path):
+        """
+        Extract features from DCT coefficients
+        
+        Args:
+            image_path: Path to image
+            
+        Returns:
+            DCT feature vector
+        """
+        try:
+            # Load image as grayscale
+            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return np.zeros(40)
+                
+            # Ensure dimensions are multiples of 8 for DCT
+            h, w = img.shape
+            h_pad = (8 - h % 8) % 8
+            w_pad = (8 - w % 8) % 8
+            img = cv2.copyMakeBorder(img, 0, h_pad, 0, w_pad, cv2.BORDER_REPLICATE)
+            
+            # Divide image into 8x8 blocks and compute DCT
+            dct_features = []
+            for i in range(0, img.shape[0], 8):
+                for j in range(0, img.shape[1], 8):
+                    block = img[i:i+8, j:j+8].astype(np.float32)
+                    dct_block = cv2.dct(block)
+                    
+                    # Extract features from DCT coefficients
+                    # AC components from zigzag scan (first 5)
+                    zigzag_indices = [(0,1), (1,0), (2,0), (1,1), (0,2)]
+                    dct_features.extend([dct_block[i, j] for i, j in zigzag_indices])
+            
+            # Calculate statistics on DCT features
+            dct_features = np.array(dct_features)
+            stats = [
+                np.mean(dct_features),
+                np.std(dct_features),
+                np.median(dct_features),
+                stats.skew(dct_features) if len(dct_features) > 0 else 0,
+                stats.kurtosis(dct_features) if len(dct_features) > 0 else 0
+            ]
+            
+            # Calculate histogram of DCT coefficients
+            hist, _ = np.histogram(dct_features, bins=20, range=(-1000, 1000))
+            normalized_hist = hist / np.sum(hist) if np.sum(hist) > 0 else hist
+            
+            # Combine statistics and histogram
+            return np.concatenate([stats, normalized_hist])
+            
+        except Exception as e:
+            logger.error(f"Error extracting DCT features: {e}")
+            return np.zeros(25)
+        
+    def extract_lbp_features(self, image_path, radius=1, n_points=8):
+        """
+        Extract Local Binary Pattern features
+        
+        Args:
+            image_path: Path to image
+            radius: Radius for LBP calculation
+            n_points: Number of points for LBP calculation
+            
+        Returns:
+            LBP feature vector
+        """
+        try:
+            from skimage.feature import local_binary_pattern
+            
+            # Load image as grayscale
+            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return np.zeros(26)
+            
+            # Calculate LBP
+            lbp = local_binary_pattern(img, n_points, radius, method='uniform')
+            
+            # Calculate histogram of LBP values
+            n_bins = n_points + 2  # Uniform LBP has n_points + 2 distinct values
+            hist, _ = np.histogram(lbp.ravel(), bins=n_bins, range=(0, n_bins))
+            hist = hist.astype(np.float64)
+            hist /= np.sum(hist) if np.sum(hist) > 0 else 1.0
+            
+            # Divide image into 2x2 regions and calculate LBP for each
+            h, w = img.shape
+            regional_features = []
+            
+            for i in range(2):
+                for j in range(2):
+                    region = img[i*h//2:(i+1)*h//2, j*w//2:(j+1)*w//2]
+                    region_lbp = local_binary_pattern(region, n_points, radius, method='uniform')
+                    region_hist, _ = np.histogram(region_lbp.ravel(), bins=n_bins, range=(0, n_bins))
+                    region_hist = region_hist.astype(np.float64)
+                    region_hist /= np.sum(region_hist) if np.sum(region_hist) > 0 else 1.0
+                    regional_features.append(np.mean(region_hist))
+                    regional_features.append(np.var(region_hist))
+            
+            # Combine global histogram and regional features
+            return np.concatenate([hist, regional_features])
+            
+        except Exception as e:
+            logger.error(f"Error extracting LBP features: {e}")
+            return np.zeros(26)  # Approximate length for n_points=8
+        
+    def extract_quality_features(self, image_path):
+        """
+        Extract image quality metrics as features
+        
+        Args:
+            image_path: Path to image
+            
+        Returns:
+            Quality feature vector
+        """
+        try:
+            # Load image
+            img = cv2.imread(image_path)
+            if img is None:
+                return np.zeros(15)
+                
+            # Convert to different color spaces
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            
+            # Calculate various image quality metrics
+            features = []
+            
+            # Blur metrics
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            features.append(laplacian_var)
+            
+            # Calculate gradient magnitude
+            sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+            gradient_mag = np.sqrt(sobelx**2 + sobely**2)
+            features.append(np.mean(gradient_mag))
+            features.append(np.std(gradient_mag))
+            
+            # Calculate entropy (measure of information content)
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+            hist = hist / np.sum(hist)
+            entropy = -np.sum(hist * np.log2(hist + 1e-10))
+            features.append(entropy)
+            
+            # Color features
+            for channel in range(3):
+                channel_data = img[:, :, channel]
+                features.extend([
+                    np.mean(channel_data),
+                    np.std(channel_data),
+                    stats.skew(channel_data.flatten())
+                ])
+            
+            # HSV statistics
+            for channel in range(3):
+                channel_data = hsv[:, :, channel]
+                features.append(np.mean(channel_data))
+                features.append(np.std(channel_data))
+            
+            return np.array(features)
+            
+        except Exception as e:
+            logger.error(f"Error extracting quality features: {e}")
+            return np.zeros(15)
 
 if __name__ == "__main__":
     import argparse

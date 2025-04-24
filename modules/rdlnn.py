@@ -587,6 +587,10 @@ class RegressionDLNN:
         if X.ndim == 1:
             X = X.reshape(1, -1)
         
+        # Apply feature selection if available
+        if hasattr(self, 'feature_selector') and self.feature_selector is not None:
+            X = self.feature_selector(X)
+        
         # Normalize features
         if hasattr(self.scaler, 'mean_'):
             X_scaled = self.scaler.transform(X)
@@ -621,6 +625,7 @@ class RegressionDLNN:
             'scheduler_state_dict': self.scheduler.state_dict() if hasattr(self, 'scheduler') else None,
             'scaler': self.scaler,
             'input_dim': self.model[0].in_features,
+            'feature_selector': self.feature_selector if hasattr(self, 'feature_selector') else None
         }
         
         # Add threshold if it exists
@@ -653,6 +658,10 @@ class RegressionDLNN:
         # Load threshold if it exists
         if 'threshold' in checkpoint:
             model.threshold = checkpoint['threshold']
+            
+        # Load feature selector if it exists
+        if 'feature_selector' in checkpoint and checkpoint['feature_selector'] is not None:
+            model.feature_selector = checkpoint['feature_selector']
 
         # Move model to the correct device after loading
         model.model = model.model.to(model.device)

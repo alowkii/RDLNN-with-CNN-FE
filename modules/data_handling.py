@@ -58,7 +58,7 @@ def precompute_features(directory: str, label=None, batch_size=16, num_workers=4
             # Process each image in the batch
             batch_features = []
             valid_paths = []
-            
+
             for img_path in batch_paths:
                 try:
                     # Preprocess image
@@ -71,7 +71,16 @@ def precompute_features(directory: str, label=None, batch_size=16, num_workers=4
                     
                     # Get fixed-length feature vector
                     pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-                    feature_vector = pooled_features.view(-1).cpu().numpy()
+                    pdywt_vector = pooled_features.view(-1).cpu().numpy()
+                    
+                    # Extract ELA features
+                    ela_vector = detector.extract_ela_features(img_path)
+                    
+                    # Extract noise pattern features
+                    noise_vector = detector.extract_noise_features(img_path)
+                    
+                    # Combine all features
+                    feature_vector = np.concatenate([pdywt_vector, ela_vector, noise_vector])
                     
                     batch_features.append(feature_vector)
                     valid_paths.append(img_path)
@@ -395,3 +404,103 @@ def create_dataloaders(X_train, X_val, y_train, y_val, batch_size=32, num_worker
     )
     
     return train_loader, val_loader
+
+def perform_feature_selection(features, labels, n_features=None, method='variance'):
+    """
+    Perform feature selection to reduce dimensionality and remove noisy features
+    
+    Args:
+        features: Feature array
+        labels: Label array
+        n_features: Number of features to select (default: 80% of original)
+        method: Feature selection method ('variance', 'mutual_info', 'random_forest')
+        
+    Returns:
+        Tuple of (selected_features, feature_selector)
+    """
+    from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_classif, mutual_info_classif
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.feature_selection import SelectFromModel
+    
+    if n_features is None:
+        n_features = int(features.shape[1] * 0.8)  # Default to keeping 80% of features
+    
+    # Calculate the variance of each feature
+    variances = np.var(features, axis=0)
+    min_variance = np.min(variances)
+    max_variance = np.max(variances)
+    median_variance = np.median(variances)
+    
+    logger.info(f"Feature variance stats - Min: {min_variance:.6f}, Median: {median_variance:.6f}, Max: {max_variance:.6f}")
+    
+    # Use a data-adaptive threshold that's a fraction of the median variance
+    # This ensures at least some features will pass the threshold
+    adaptive_threshold = min(0.001, median_variance * 0.1)
+    logger.info(f"Using adaptive variance threshold: {adaptive_threshold:.6f}")
+    
+    # First, remove features with near-zero variance
+    variance_selector = VarianceThreshold(threshold=adaptive_threshold)
+    features_var_selected = variance_selector.fit_transform(features)
+    
+    logger.info(f"After variance threshold: {features_var_selected.shape[1]} features (removed {features.shape[1] - features_var_selected.shape[1]})")
+    
+    # If all features were removed, return the original features
+    if features_var_selected.shape[1] == 0:
+        logger.warning("All features removed by variance threshold! Using original features.")
+        features_var_selected = features
+        # Reset to a pass-through selector
+        variance_selector = VarianceThreshold(threshold=0.0)
+        variance_selector.fit(features)
+    
+    # Apply specified selection method
+    if method == 'variance':
+        # Just use variance threshold
+        return features_var_selected, variance_selector
+        
+    elif method == 'mutual_info':
+        # Use mutual information for feature selection
+        k = min(n_features, features_var_selected.shape[1])
+        info_selector = SelectKBest(mutual_info_classif, k=k)
+        features_selected = info_selector.fit_transform(features_var_selected, labels)
+        
+        # Create a combined selector
+        def combined_selector(X):
+            X_var = variance_selector.transform(X)
+            return info_selector.transform(X_var)
+            
+        return features_selected, combined_selector
+        
+    elif method == 'random_forest':
+        # Use Random Forest for feature importance-based selection
+        # For CASIAv2, ensure class balance
+        rf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+        rf.fit(features_var_selected, labels)
+        
+        # Get feature importances
+        importances = rf.feature_importances_
+        
+        # Create a simpler approach - just manually select top k features
+        k = min(n_features, features_var_selected.shape[1])
+        
+        # Sort indices by importance
+        indices = np.argsort(importances)[::-1][:k]
+        
+        # Create a manual selector that just picks these columns
+        features_selected = features_var_selected[:, indices]
+        
+        # Create a combined selector as a function that applies both steps
+        def combined_selector(X):
+            X_var = variance_selector.transform(X)
+            # Manual column selection instead of using SelectFromModel
+            return X_var[:, indices]
+        
+        # Print top features
+        top_features = sorted(zip(range(len(indices)), importances[indices]), key=lambda x: x[1], reverse=True)[:10]
+        logger.info("Top 10 features by importance:")
+        for i, (idx, importance) in enumerate(top_features):
+            logger.info(f"  {i+1}. Feature {idx}: {importance:.4f}")
+        
+        return features_selected, combined_selector
+    
+    # Default fallback
+    return features, lambda x: x
