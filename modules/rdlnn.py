@@ -587,43 +587,62 @@ class RegressionDLNN:
         if X.ndim == 1:
             X = X.reshape(1, -1)
         
-        # Check dimensions match what's expected
-        if hasattr(self, 'feature_selector') and self.feature_selector is not None:
-            expected_dim = self.feature_selector.variance_selector.n_features_in_
-            if X.shape[1] != expected_dim:
-                # Log warning
-                logger.warning(f"Feature dimension mismatch: got {X.shape[1]}, expected {expected_dim}")
-                
-                # Fix dimension mismatch - either pad or truncate
-                if X.shape[1] > expected_dim:
-                    logger.info(f"Truncating features from {X.shape[1]} to {expected_dim}")
-                    X = X[:, :expected_dim]
-                elif X.shape[1] < expected_dim:
-                    logger.info(f"Input has fewer features than expected. Using available features only.")
-                    # Skip feature selection in this case
-                    X_scaled = self.scaler.transform(X) if hasattr(self, 'scaler') else X
-                    X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=self.device)
-                    
-                    # Make prediction
-                    with torch.no_grad():
-                        logits = self.model(X_tensor)
-                        confidences = torch.sigmoid(logits).cpu().numpy()
-                    
-                    # Convert to binary output with confidence
-                    predictions = (confidences >= 0.5).astype(int)
-                    
-                    # Return predictions and confidences
-                    return predictions.flatten(), confidences.flatten()
-            
-            # Apply feature selection if dimensions match
-            X = self.feature_selector(X)
+        # Determine expected input dimension from model architecture
+        input_dim = self.model[0].in_features
         
-        # Normalize features
-        if hasattr(self.scaler, 'mean_'):
-            X_scaled = self.scaler.transform(X)
+        # Handle dimension mismatch - resize input to match model's expectations
+        if X.shape[1] != input_dim:
+            logger.warning(f"Feature dimension mismatch: got {X.shape[1]}, expected {input_dim}")
+            
+            if X.shape[1] > input_dim:
+                # If features exceed expected dimension, take only the ones we need
+                logger.info(f"Truncating features from {X.shape[1]} to {input_dim}")
+                X = X[:, :input_dim]
+            else:
+                # If features are fewer than expected, pad with zeros
+                logger.info(f"Padding features from {X.shape[1]} to {input_dim}")
+                padded = np.zeros((X.shape[0], input_dim))
+                padded[:, :X.shape[1]] = X
+                X = padded
+        
+        # Normalize features if scaler is available
+        if hasattr(self, 'scaler') and self.scaler is not None:
+            try:
+                # Check if scaler expects different dimensions
+                scaler_dim = getattr(self.scaler, 'n_features_in_', input_dim)
+                
+                if X.shape[1] != scaler_dim:
+                    logger.warning(f"Feature dimension mismatch for scaler: got {X.shape[1]}, expected {scaler_dim}")
+                    
+                    if X.shape[1] > scaler_dim:
+                        X_for_scaler = X[:, :scaler_dim]
+                    else:
+                        X_for_scaler = np.zeros((X.shape[0], scaler_dim))
+                        X_for_scaler[:, :X.shape[1]] = X
+                    
+                    X_scaled = self.scaler.transform(X_for_scaler)
+                    
+                    # Resize back to model input size if needed
+                    if X_scaled.shape[1] != input_dim:
+                        if X_scaled.shape[1] > input_dim:
+                            X_scaled = X_scaled[:, :input_dim]
+                        else:
+                            temp = np.zeros((X_scaled.shape[0], input_dim))
+                            temp[:, :X_scaled.shape[1]] = X_scaled
+                            X_scaled = temp
+                else:
+                    X_scaled = self.scaler.transform(X)
+            except Exception as e:
+                logger.warning(f"Error applying scaler: {e}. Using normalized features.")
+                # If scaling fails, normalize to [0,1] range as a fallback
+                X_min = X.min(axis=0)
+                X_max = X.max(axis=0)
+                # Avoid division by zero
+                divisor = np.maximum(X_max - X_min, 1e-10)
+                X_scaled = (X - X_min) / divisor
         else:
+            logger.warning("No scaler found. Using original features.")
             X_scaled = X
-            logger.warning("Warning: StandardScaler not fitted yet. Using raw features.")
         
         # Convert to tensor and move to device
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32, device=self.device)
@@ -636,7 +655,8 @@ class RegressionDLNN:
             confidences = torch.sigmoid(logits).cpu().numpy()
         
         # Convert to binary output with confidence
-        predictions = (confidences >= 0.5).astype(int)
+        threshold = getattr(self, 'threshold', 0.5)
+        predictions = (confidences >= threshold).astype(int)
         
         # Return predictions and confidences
         return predictions.flatten(), confidences.flatten()

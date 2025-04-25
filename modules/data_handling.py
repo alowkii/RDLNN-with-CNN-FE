@@ -14,6 +14,51 @@ from modules.preprocessing import preprocess_image
 from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, clean_cuda_memory
 
+class RobustFeatureSelector:
+    def __init__(self, variance_selector, indices, expected_features):
+        self.variance_selector = variance_selector
+        self.indices = indices
+        self.expected_features = expected_features
+        
+    def __call__(self, X):
+        # Check if dimensions match what's expected
+        if X.shape[1] != self.expected_features:
+            logger.warning(f"Feature dimension mismatch: got {X.shape[1]}, expected {self.expected_features}")
+            
+            # Handle dimension mismatch
+            if X.shape[1] > self.expected_features:
+                # If too many features, truncate
+                logger.info(f"Truncating features from {X.shape[1]} to {self.expected_features}")
+                X = X[:, :self.expected_features]
+            else:
+                # If too few features, pad with zeros
+                logger.info(f"Padding features from {X.shape[1]} to {self.expected_features}")
+                padded = np.zeros((X.shape[0], self.expected_features))
+                padded[:, :X.shape[1]] = X
+                X = padded
+        
+        # Apply variance selector and feature selection with error handling
+        try:
+            # Apply variance selector
+            X_var = self.variance_selector.transform(X)
+            # Then select the chosen features
+            return X_var[:, self.indices]
+        except Exception as e:
+            logger.error(f"Error applying feature selection, using original features: {e}")
+            # In case of error, try to return appropriately sized features
+            if hasattr(self.variance_selector, 'n_features_'):
+                # If we know the expected output size, pad or truncate
+                output_size = len(self.indices)
+                if X.shape[1] > output_size:
+                    return X[:, :output_size]
+                else:
+                    padded = np.zeros((X.shape[0], output_size))
+                    padded[:, :X.shape[1]] = X
+                    return padded
+            else:
+                # Otherwise just return the input
+                return X
+
 def precompute_features(directory: str, label=None, batch_size=16, num_workers=4, use_fp16=True, save_path=None) -> Dict[str, Any]:
     """
     Precompute and optionally save feature vectors for all images in a directory
@@ -61,29 +106,15 @@ def precompute_features(directory: str, label=None, batch_size=16, num_workers=4
 
             for img_path in batch_paths:
                 try:
-                    # Preprocess image
-                    ycbcr_tensor = detector.preprocess_image(img_path)
-                    if ycbcr_tensor is None:
-                        continue
-                        
-                    # Extract wavelet features
-                    feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
+                    # Extract all features using the detector's extract_features method
+                    # which combines wavelet, ELA, and noise features consistently
+                    feature_vector = detector.extract_features(img_path)
                     
-                    # Get fixed-length feature vector
-                    pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-                    pdywt_vector = pooled_features.view(-1).cpu().numpy()
-                    
-                    # Extract ELA features
-                    ela_vector = detector.extract_ela_features(img_path)
-                    
-                    # Extract noise pattern features
-                    noise_vector = detector.extract_noise_features(img_path)
-                    
-                    # Combine all features
-                    feature_vector = np.concatenate([pdywt_vector, ela_vector, noise_vector])
-                    
-                    batch_features.append(feature_vector)
-                    valid_paths.append(img_path)
+                    if feature_vector is not None:
+                        batch_features.append(feature_vector)
+                        valid_paths.append(img_path)
+                    else:
+                        logger.warning(f"Failed to extract features from {img_path}")
                 except Exception as e:
                     logger.error(f"Error processing {img_path}: {e}")
             

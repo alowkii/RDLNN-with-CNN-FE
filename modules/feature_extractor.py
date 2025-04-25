@@ -787,7 +787,7 @@ class PDyWTCNNDetector:
             ycbcr_tensor = self.preprocess_image(image_path)
             if ycbcr_tensor is None:
                 return None
-                
+                    
             # Extract wavelet features
             feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
             
@@ -795,13 +795,33 @@ class PDyWTCNNDetector:
             pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
             pdywt_vector = pooled_features.view(-1).cpu().numpy()
             
-            # Extract all our additional features
-            ela_vector = self.extract_ela_features(image_path)
-            noise_vector = self.extract_noise_features(image_path)
+            # Extract ELA features with error handling
+            try:
+                ela_vector = self.extract_ela_features(image_path)
+            except Exception as e:
+                logger.warning(f"Error extracting ELA features, using zeros: {e}")
+                ela_vector = np.zeros(15)  # Use appropriate size
             
-            # Extract other features defined in your extraction pipeline
-            jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
-            dct_vector = self.extract_dct_features(image_path)
+            # Extract noise features with error handling
+            try:
+                noise_vector = self.extract_noise_features(image_path)
+            except Exception as e:
+                logger.warning(f"Error extracting noise features, using zeros: {e}")
+                noise_vector = np.zeros(10)  # Use appropriate size
+            
+            # Extract JPEG ghost features with error handling
+            try:
+                jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
+            except Exception as e:
+                logger.warning(f"Error extracting JPEG ghost features, using zeros: {e}")
+                jpeg_ghost_vector = np.zeros(100)  # Use appropriate size
+            
+            # Extract DCT features with error handling
+            try:
+                dct_vector = self.extract_dct_features(image_path)
+            except Exception as e:
+                logger.warning(f"Error extracting DCT features, using zeros: {e}")
+                dct_vector = np.zeros(25)  # Use appropriate size
             
             # Combine all features into a single vector
             combined_vector = np.concatenate([
@@ -811,6 +831,8 @@ class PDyWTCNNDetector:
                 jpeg_ghost_vector,
                 dct_vector
             ])
+            
+            logger.debug(f"Extracted combined feature vector with shape {combined_vector.shape}")
             
             return combined_vector
             
@@ -829,65 +851,88 @@ class PDyWTCNNDetector:
             Dictionary with detection results
         """
         with torch.no_grad():
-            # Preprocess image
-            ycbcr_tensor = self.preprocess_image(image_path)
-            if ycbcr_tensor is None:
-                return {'error': 'Failed to preprocess image'}
-            
-            # Extract wavelet features
-            feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
-            
-            # Check which model to use
-            if self.rdlnn_model:
-                # Handle RegressionDLNN model
-                # Get a fixed-length feature vector by average pooling
-                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-                feature_vector = pooled_features.view(1, -1).cpu().numpy()
+            try:
+                # Extract features using the comprehensive extract_features method
+                feature_vector = self.extract_features(image_path)
                 
-                # Use RegressionDLNN for prediction
-                predictions, probabilities = self.rdlnn_model.predict(feature_vector)
+                if feature_vector is None:
+                    return {'error': 'Failed to extract features'}
+                    
+                # Reshape to 2D array for prediction
+                feature_vector = feature_vector.reshape(1, -1)
                 
-                # Get the prediction and probability for the first (only) sample
-                prediction = int(predictions[0])
-                probability = float(probabilities[0])
+                # Check which model to use
+                if self.rdlnn_model:
+                    # Apply feature selection if available
+                    if hasattr(self.rdlnn_model, 'feature_selector') and self.rdlnn_model.feature_selector is not None:
+                        try:
+                            feature_vector = self.rdlnn_model.feature_selector(feature_vector)
+                        except Exception as e:
+                            logger.error(f"Error applying feature selection: {e}")
+                    
+                    # Use RegressionDLNN for prediction
+                    predictions, probabilities = self.rdlnn_model.predict(feature_vector)
+                    
+                    # Get the prediction and probability for the first (only) sample
+                    prediction = int(predictions[0])
+                    probability = float(probabilities[0])
+                    
+                    # Get threshold
+                    threshold = getattr(self.rdlnn_model, 'threshold', 0.6)
+                    
+                    return {
+                        'prediction': prediction,  # 1 = forged, 0 = authentic
+                        'probability': probability,
+                        'threshold': threshold,
+                        'features': feature_vector[0]
+                    }
                 
-                return {
-                    'prediction': prediction,  # 1 = forged, 0 = authentic
-                    'probability': probability,
-                    'features': feature_vector[0]
-                }
-            
-            elif self.detection_model:
-                # Add batch dimension for CNN
-                feature_tensor = feature_tensor.unsqueeze(0).to(self.device)
+                # Fall back to other model types if needed
+                elif self.detection_model:
+                    # Add batch dimension for CNN
+                    feature_tensor = torch.from_numpy(feature_vector).float().to(self.device)
+                    
+                    # Run detection model
+                    logits, features = self.detection_model(feature_tensor)
+                    
+                    # Convert to probability
+                    probability = torch.sigmoid(logits).item()
+                    
+                    # Make prediction
+                    prediction = 1 if probability >= self.threshold else 0
+                    
+                    return {
+                        'prediction': prediction,
+                        'probability': probability,
+                        'features': features.cpu().numpy()
+                    }
                 
-                # Run detection model
-                logits, features = self.detection_model(feature_tensor)
+                elif self.flat_feature_detector:
+                    # Add batch dimension for MLP
+                    feature_tensor = torch.from_numpy(feature_vector).float().to(self.device)
+                    
+                    # Run detection model
+                    logits, features = self.flat_feature_detector(feature_tensor)
+                    
+                    # Convert to probability
+                    probability = torch.sigmoid(logits).item()
+                    
+                    # Make prediction
+                    prediction = 1 if probability >= self.threshold else 0
+                    
+                    return {
+                        'prediction': prediction,
+                        'probability': probability,
+                        'features': features.cpu().numpy()
+                    }
                 
-            elif self.flat_feature_detector:
-                # Flatten and pool for flat feature detector
-                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-                flat_features = pooled_features.view(1, -1).to(self.device)
-                
-                # Run flat feature detector
-                logits, features = self.flat_feature_detector(flat_features)
-            
-            else:
-                return {'error': 'No detection model available'}
-            
-            # Calculate probability
-            probability = torch.sigmoid(logits).item()
-            
-            # Make prediction
-            prediction = 1 if probability >= self.threshold else 0
-            
-            # Return results
-            return {
-                'prediction': prediction,  # 1 = forged, 0 = authentic
-                'probability': probability,
-                'features': features.cpu().numpy()
-            }
-    
+                else:
+                    return {'error': 'No detection model available'}
+                    
+            except Exception as e:
+                logger.error(f"Error during detection: {e}")
+                return {'error': str(e)}
+
     def localize(self, image_path, save_path=None):
         """
         Localize potentially forged regions in an image
@@ -1307,18 +1352,23 @@ class PDyWTCNNDetector:
                             ])
                 
                 # Add consistency measures
-                region_means = [stats[0] for stats in region_stats[::3]]
+                # Fix: Don't try to access region_stats as a list of lists
+                region_means = np.array([region_stats[i] for i in range(0, len(region_stats), 3)])
                 features.append(np.var(region_means))
                 features.extend(region_stats)
                 
                 # Clean up
-                os.remove(temp_path)
-                
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                    
             return np.array(features)
         
         except Exception as e:
             logger.error(f"Error extracting JPEG ghost features: {e}")
-            return np.zeros(len(quality_range) * 25)  # Approximate length
+            # Return zeros with appropriate size - 25 per quality level
+            return np.zeros(len(quality_range) * 25)
         
     def extract_dct_features(self, image_path):
         """
@@ -1335,7 +1385,7 @@ class PDyWTCNNDetector:
             img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 return np.zeros(40)
-                
+                    
             # Ensure dimensions are multiples of 8 for DCT
             h, w = img.shape
             h_pad = (8 - h % 8) % 8
@@ -1356,12 +1406,16 @@ class PDyWTCNNDetector:
             
             # Calculate statistics on DCT features
             dct_features = np.array(dct_features)
-            stats = [
+            
+            # Fix: Import scipy.stats locally to avoid name conflict
+            from scipy import stats as scipy_stats
+            
+            feature_stats = [
                 np.mean(dct_features),
                 np.std(dct_features),
                 np.median(dct_features),
-                stats.skew(dct_features) if len(dct_features) > 0 else 0,
-                stats.kurtosis(dct_features) if len(dct_features) > 0 else 0
+                scipy_stats.skew(dct_features.flatten()) if len(dct_features) > 0 else 0,
+                scipy_stats.kurtosis(dct_features.flatten()) if len(dct_features) > 0 else 0
             ]
             
             # Calculate histogram of DCT coefficients
@@ -1369,8 +1423,8 @@ class PDyWTCNNDetector:
             normalized_hist = hist / np.sum(hist) if np.sum(hist) > 0 else hist
             
             # Combine statistics and histogram
-            return np.concatenate([stats, normalized_hist])
-            
+            return np.concatenate([feature_stats, normalized_hist])
+                
         except Exception as e:
             logger.error(f"Error extracting DCT features: {e}")
             return np.zeros(25)

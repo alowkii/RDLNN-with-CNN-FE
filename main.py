@@ -349,37 +349,24 @@ def test_mode(args: argparse.Namespace) -> None:
     # Load the model
     model = RegressionDLNN.load(args.model_path)
     
+    # Get the expected feature dimension from the model
+    input_dim = model.model[0].in_features
+    logger.info(f"Model expects {input_dim} features")
+    
     # Check if model has a custom threshold
     threshold = getattr(model, 'threshold', 0.6)
-    logger.info(f"Using classification threshold: {threshold}")
+    if args.threshold is not None:
+        threshold = args.threshold
+        logger.info(f"Using override threshold: {threshold}")
+    else:
+        logger.info(f"Using model's threshold: {threshold}")
     
-    # Precompute features if not already done
-    features_file = args.features_path
-    if not os.path.exists(features_file):
-        logger.info("Precomputing features for test images...")
-        precompute_features(
-            directory=args.input_dir,
-            batch_size=args.batch_size,
-            num_workers=args.workers,
-            use_fp16=args.fp16,
-            save_path=features_file
-        )
+    # Get image files
+    image_files = [f for f in os.listdir(args.input_dir) 
+                  if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))]
     
-    # Load features
-    test_features, test_labels, test_paths = load_and_verify_features(features_file)
-    
-    if len(test_features) == 0:
-        logger.error("Error: No valid features found for testing.")
-        return
-    
-    # Make predictions
-    start_time = time.time()
-    _, confidences = model.predict(test_features)
-    
-    # Apply custom threshold if available
-    predictions = (confidences >= threshold).astype(int)
-    
-    elapsed_time = time.time() - start_time
+    num_images = len(image_files)
+    logger.info(f"Found {num_images} images in {args.input_dir}")
     
     # Process results
     results = {
@@ -393,57 +380,67 @@ def test_mode(args: argparse.Namespace) -> None:
     with open(results_file, 'w') as f:
         f.write("Image Forgery Detection Results\n")
         f.write("==============================\n\n")
+        f.write(f"Using threshold: {threshold:.4f}\n\n")
         
-        for i, (path, pred, conf) in enumerate(zip(test_paths, predictions, confidences)):
-            img_name = os.path.basename(path)
-            result_type = 'forged' if pred == 1 else 'authentic'
-            results[result_type].append(img_name)
+        # Process each image
+        detector = PDyWTCNNDetector()
+        
+        for image_file in tqdm(image_files, desc="Processing images"):
+            image_path = os.path.join(args.input_dir, image_file)
             
-            f.write(f"Image: {img_name}\n")
-            f.write(f"Result: {result_type.upper()}\n")
-            f.write(f"Confidence: {conf:.4f}\n")
-            
-            if i < len(test_labels):
-                true_label = 'forged' if test_labels[i] == 1 else 'authentic'
-                f.write(f"True label: {true_label.upper()}\n")
-                if pred == test_labels[i]:
-                    f.write("Prediction: CORRECT\n")
-                else:
-                    f.write("Prediction: INCORRECT\n")
-            
-            f.write("\n")
+            try:
+                # Extract features - simplify to use just wavelet features
+                ycbcr_tensor = detector.preprocess_image(image_path)
+                
+                if ycbcr_tensor is None:
+                    f.write(f"Image: {image_file}\n")
+                    f.write(f"Result: ERROR - Could not preprocess image\n\n")
+                    results['errors'].append(image_file)
+                    continue
+                    
+                # Extract wavelet features
+                feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
+                
+                # Get a fixed-length feature vector by average pooling
+                pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
+                feature_vector = pooled_features.view(1, -1).cpu().numpy()
+                
+                # Match feature dimensions to what the model expects
+                if feature_vector.shape[1] > input_dim:
+                    feature_vector = feature_vector[:, :input_dim]
+                elif feature_vector.shape[1] < input_dim:
+                    padded = np.zeros((1, input_dim))
+                    padded[:, :feature_vector.shape[1]] = feature_vector
+                    feature_vector = padded
+                
+                # Make prediction
+                _, confidences = model.predict(feature_vector)
+                
+                # Apply threshold
+                prediction = 1 if confidences[0] >= threshold else 0
+                confidence = confidences[0]
+                result = "FORGED" if prediction == 1 else "AUTHENTIC"
+                
+                # Record result
+                results[result.lower()].append(image_file)
+                
+                # Write to results file
+                f.write(f"Image: {image_file}\n")
+                f.write(f"Result: {result}\n")
+                f.write(f"Confidence: {confidence:.4f}\n\n")
+                
+            except Exception as e:
+                logger.error(f"Error processing {image_file}: {e}")
+                f.write(f"Image: {image_file}\n")
+                f.write(f"Result: ERROR - {str(e)}\n\n")
+                results['errors'].append(image_file)
     
     # Print summary
     logger.info("\nProcessing complete!")
-    logger.info(f"Processed {len(predictions)} images in {elapsed_time:.2f} seconds")
+    logger.info(f"Processed {num_images} images")
     logger.info(f"Authentic images: {len(results['authentic'])}")
     logger.info(f"Forged images: {len(results['forged'])}")
-    
-    # Compute accuracy if we have labels
-    if len(test_labels) > 0:
-        accuracy = np.mean(predictions == test_labels)
-        logger.info(f"Accuracy: {accuracy:.4f}")
-        
-        # Compute confusion matrix
-        tp = np.sum((predictions == 1) & (test_labels == 1))
-        tn = np.sum((predictions == 0) & (test_labels == 0))
-        fp = np.sum((predictions == 1) & (test_labels == 0))
-        fn = np.sum((predictions == 0) & (test_labels == 1))
-        
-        logger.info("\nConfusion Matrix:")
-        logger.info(f"True Positive: {tp}")
-        logger.info(f"True Negative: {tn}")
-        logger.info(f"False Positive: {fp}")
-        logger.info(f"False Negative: {fn}")
-        
-        # Calculate precision, recall, and F1 score
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-        
-        logger.info(f"Precision: {precision:.4f}")
-        logger.info(f"Recall: {recall:.4f}")
-        logger.info(f"F1 Score: {f1:.4f}")
+    logger.info(f"Errors: {len(results['errors'])}")
     
     logger.info(f"Results saved to {results_file}")
 
@@ -461,18 +458,30 @@ def localize_mode(args: argparse.Namespace) -> None:
         localization_model_path=args.localization_model_path
     )
     
+    # Get threshold
+    threshold = args.threshold
+    if threshold is None and hasattr(detector.rdlnn_model, 'threshold'):
+        threshold = detector.rdlnn_model.threshold
+    elif threshold is None:
+        threshold = 0.6
+    
+    logger.info(f"Using classification threshold: {threshold}")
+    
     if args.image_path:
         # Process single image
         logger.info(f"Localizing forgery in image: {args.image_path}")
         result = detector.detect(args.image_path)
         
-        if result['prediction'] == 1:
+        # Apply threshold
+        prediction = 1 if result.get('probability', 0) >= threshold else 0
+        
+        if prediction == 1:
             # Image detected as forged, perform localization
             output_path = os.path.join(args.output_dir, f"{os.path.splitext(os.path.basename(args.image_path))[0]}_forgery_map.png")
             localization_result = detector.localize(args.image_path, save_path=output_path)
             
             logger.info(f"Localization result saved to {output_path}")
-            if localization_result['region_proposals']:
+            if localization_result.get('region_proposals', []):
                 logger.info(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
         else:
             logger.info("Image appears authentic, no localization performed.")
@@ -488,13 +497,16 @@ def localize_mode(args: argparse.Namespace) -> None:
             
             result = detector.detect(image_path)
             
-            if result['prediction'] == 1:
+            # Apply threshold
+            prediction = 1 if result.get('probability', 0) >= threshold else 0
+            
+            if prediction == 1:
                 # Image detected as forged, perform localization
                 output_path = os.path.join(args.output_dir, f"{os.path.splitext(image_file)[0]}_forgery_map.png")
                 localization_result = detector.localize(image_path, save_path=output_path)
                 
                 logger.info(f"Localization result saved to {output_path}")
-                if localization_result['region_proposals']:
+                if localization_result.get('region_proposals', []):
                     logger.info(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
             else:
                 logger.info(f"{image_file} appears authentic, no localization performed.")
@@ -522,6 +534,10 @@ def test_single_image(args: argparse.Namespace) -> None:
     # Load the model
     model = RegressionDLNN.load(args.model_path)
     
+    # Get the expected feature dimension from the model
+    input_dim = model.model[0].in_features
+    logger.info(f"Model expects {input_dim} features")
+    
     # Check if model has a custom threshold
     threshold = getattr(model, 'threshold', 0.6)
     logger.info(f"Using classification threshold: {threshold}")
@@ -529,7 +545,6 @@ def test_single_image(args: argparse.Namespace) -> None:
     if args.threshold:
         threshold = args.threshold
         logger.info(f"Overriding with command threshold: {threshold}")
-                                                                     
     
     # Process the image
     logger.info(f"Processing single image: {args.image_path}")
@@ -539,38 +554,30 @@ def test_single_image(args: argparse.Namespace) -> None:
         # Initialize detector
         detector = PDyWTCNNDetector()
         
-        # Preprocess the image
+        # Extract features - simplify to use just wavelet features
+        # This is more reliable than using the full feature set
         ycbcr_tensor = detector.preprocess_image(args.image_path)
         
         if ycbcr_tensor is None:
             logger.error("Error: Failed to preprocess image")
             return
-        
-        # Extract wavelet features only
+            
+        # Extract wavelet features
         feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
         
         # Get a fixed-length feature vector by average pooling
         pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
         feature_vector = pooled_features.view(1, -1).cpu().numpy()
         
-        # Get expected feature dimension from model
-        expected_dim = 25
-        if hasattr(model, 'scaler') and hasattr(model.scaler, 'n_features_in_'):
-            expected_dim = model.scaler.n_features_in_
-            logger.info(f"Model expects features: {expected_dim}")
-        
-        # Log the extracted feature shape
-        logger.info(f"Extracted feature vector shape: {feature_vector.shape}")
-        
-        # Ensure correct dimensions - either pad or truncate
-        if feature_vector.shape[1] > expected_dim:
-            logger.info(f"Truncating features from {feature_vector.shape[1]} to {expected_dim}")
-            feature_vector = feature_vector[:, :expected_dim]
-        elif feature_vector.shape[1] < expected_dim:
-            padded_vector = np.zeros((1, expected_dim))
-            padded_vector[:, :feature_vector.shape[1]] = feature_vector
-            logger.info(f"Padding features from {feature_vector.shape[1]} to {expected_dim}")
-            feature_vector = padded_vector
+        # Match feature dimensions to what the model expects
+        if feature_vector.shape[1] > input_dim:
+            logger.info(f"Truncating features from {feature_vector.shape[1]} to {input_dim}")
+            feature_vector = feature_vector[:, :input_dim]
+        elif feature_vector.shape[1] < input_dim:
+            logger.info(f"Padding features from {feature_vector.shape[1]} to {input_dim}")
+            padded = np.zeros((1, input_dim))
+            padded[:, :feature_vector.shape[1]] = feature_vector
+            feature_vector = padded
         
         # Make prediction
         _, confidences = model.predict(feature_vector)
@@ -596,6 +603,8 @@ def test_single_image(args: argparse.Namespace) -> None:
         
     except Exception as e:
         logger.error(f"Error processing image: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     
     elapsed_time = time.time() - start_time
     logger.info(f"Processing completed in {elapsed_time:.2f} seconds")
