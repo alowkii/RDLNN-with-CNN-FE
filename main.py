@@ -554,30 +554,37 @@ def test_single_image(args: argparse.Namespace) -> None:
         # Initialize detector
         detector = PDyWTCNNDetector()
         
-        # Extract features - simplify to use just wavelet features
-        # This is more reliable than using the full feature set
-        ycbcr_tensor = detector.preprocess_image(args.image_path)
+        # CHANGE HERE: Use the full feature extraction method instead of just wavelet features
+        # This extracts all feature types (wavelet, ELA, noise, etc.) as used during training
+        feature_vector = detector.extract_features(args.image_path)
         
-        if ycbcr_tensor is None:
-            logger.error("Error: Failed to preprocess image")
+        if feature_vector is None:
+            logger.error("Error: Failed to extract features")
             return
             
-        # Extract wavelet features
-        feature_tensor = detector.extract_wavelet_features(ycbcr_tensor)
+        # Reshape for prediction
+        feature_vector = feature_vector.reshape(1, -1)
         
-        # Get a fixed-length feature vector by average pooling
-        pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
-        feature_vector = pooled_features.view(1, -1).cpu().numpy()
+        # Apply feature selection if available in the model
+        if hasattr(model, 'feature_selector') and model.feature_selector is not None:
+            try:
+                feature_vector = model.feature_selector(feature_vector)
+                logger.info(f"Applied feature selection, new shape: {feature_vector.shape}")
+            except Exception as e:
+                logger.error(f"Error applying feature selection: {e}")
         
         # Match feature dimensions to what the model expects
-        if feature_vector.shape[1] > input_dim:
-            logger.info(f"Truncating features from {feature_vector.shape[1]} to {input_dim}")
-            feature_vector = feature_vector[:, :input_dim]
-        elif feature_vector.shape[1] < input_dim:
-            logger.info(f"Padding features from {feature_vector.shape[1]} to {input_dim}")
-            padded = np.zeros((1, input_dim))
-            padded[:, :feature_vector.shape[1]] = feature_vector
-            feature_vector = padded
+        if feature_vector.shape[1] != input_dim:
+            logger.warning(f"Feature dimension mismatch: got {feature_vector.shape[1]}, expected {input_dim}")
+            
+            if feature_vector.shape[1] > input_dim:
+                logger.info(f"Truncating features from {feature_vector.shape[1]} to {input_dim}")
+                feature_vector = feature_vector[:, :input_dim]
+            else:
+                logger.info(f"Padding features from {feature_vector.shape[1]} to {input_dim}")
+                padded = np.zeros((1, input_dim))
+                padded[:, :feature_vector.shape[1]] = feature_vector
+                feature_vector = padded
         
         # Make prediction
         _, confidences = model.predict(feature_vector)

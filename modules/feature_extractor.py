@@ -1606,3 +1606,4 @@ if __name__ == "__main__":
         localization_model_path=args.localization_model,
         output_dir=args.output_dir
     )
+
