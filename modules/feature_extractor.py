@@ -606,8 +606,15 @@ class PDyWTCNNDetector:
             Preprocessed image tensor in YCbCr color space
         """
         try:
-            # Load image
+            from PIL import Image
+            Image.MAX_IMAGE_PIXELS = None
+
+            # Load image with explicit RGB conversion to ensure consistent handling
+            logger.info(f"Loading image from {image_path}")
             img = Image.open(image_path).convert("RGB")
+            
+            # Log image details for debugging
+            logger.info(f"Image size: {img.size}, mode: {img.mode}")
             
             # Convert to numpy array
             img_np = np.array(img).astype(np.float32) / 255.0
@@ -627,10 +634,13 @@ class PDyWTCNNDetector:
             # Convert to tensor
             ycbcr_tensor = torch.tensor(ycbcr, dtype=torch.float32)
             
+            logger.info(f"YCbCr tensor shape: {ycbcr_tensor.shape}")
+
             return ycbcr_tensor
             
         except Exception as e:
             logger.error(f"Error preprocessing image {image_path}: {e}")
+            logger.error(traceback.format_exc())
             return None
     
     def extract_wavelet_features(self, ycbcr_tensor):
@@ -838,8 +848,9 @@ class PDyWTCNNDetector:
             
         except Exception as e:
             logger.error(f"Error extracting features from {image_path}: {e}")
+            logger.error(traceback.format_exc())
             return None
-    
+
     def detect(self, image_path):
         """
         Detect if an image is forged
@@ -889,23 +900,57 @@ class PDyWTCNNDetector:
                 
                 # Fall back to other model types if needed
                 elif self.detection_model:
-                    # Add batch dimension for CNN
-                    feature_tensor = torch.from_numpy(feature_vector).float().to(self.device)
-                    
-                    # Run detection model
-                    logits, features = self.detection_model(feature_tensor)
-                    
-                    # Convert to probability
-                    probability = torch.sigmoid(logits).item()
-                    
-                    # Make prediction
-                    prediction = 1 if probability >= self.threshold else 0
-                    
-                    return {
-                        'prediction': prediction,
-                        'probability': probability,
-                        'features': features.cpu().numpy()
-                    }
+                    # For CNN models, we need to reconstruct spatial dimensions
+                    # from the flat feature vector
+                    try:
+                        # For WaveletCNN, we need image-like input
+                        # Extract wavelet features directly
+                        ycbcr_tensor = self.preprocess_image(image_path)
+                        if ycbcr_tensor is None:
+                            return {'error': 'Failed to preprocess image'}
+                            
+                        feature_tensor = self.extract_wavelet_features(ycbcr_tensor)
+                        
+                        # Add batch dimension for CNN
+                        feature_tensor = feature_tensor.unsqueeze(0).to(self.device)
+                        
+                        # Run detection model
+                        logits, features = self.detection_model(feature_tensor)
+                        
+                        # Convert to probability
+                        probability = torch.sigmoid(logits).item()
+                        
+                        # Make prediction
+                        prediction = 1 if probability >= self.threshold else 0
+                        
+                        return {
+                            'prediction': prediction,
+                            'probability': probability,
+                            'features': features.cpu().numpy().flatten()
+                        }
+                    except Exception as e:
+                        logger.error(f"Error using WaveletCNN: {e}")
+                        # Fall back to using the flat feature detector if CNN fails
+                        if self.flat_feature_detector:
+                            # Add batch dimension for MLP
+                            feature_tensor = torch.from_numpy(feature_vector).float().to(self.device)
+                            
+                            # Run detection model
+                            logits, features = self.flat_feature_detector(feature_tensor)
+                            
+                            # Convert to probability
+                            probability = torch.sigmoid(logits).item()
+                            
+                            # Make prediction
+                            prediction = 1 if probability >= self.threshold else 0
+                            
+                            return {
+                                'prediction': prediction,
+                                'probability': probability,
+                                'features': features.cpu().numpy()
+                            }
+                        else:
+                            return {'error': f'WaveletCNN failed: {e}', 'probability': 0.5}
                 
                 elif self.flat_feature_detector:
                     # Add batch dimension for MLP
@@ -927,11 +972,11 @@ class PDyWTCNNDetector:
                     }
                 
                 else:
-                    return {'error': 'No detection model available'}
+                    return {'error': 'No detection model available', 'probability': 0.5}
                     
             except Exception as e:
                 logger.error(f"Error during detection: {e}")
-                return {'error': str(e)}
+                return {'error': str(e), 'probability': 0.5}
 
     def localize(self, image_path, save_path=None):
         """

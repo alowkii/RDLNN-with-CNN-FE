@@ -37,8 +37,8 @@ config = {
     'detection_model_path': '../data/models/rdlnn_model.pth',
     'localization_model_path': '../data/models/cnn_localizer.pth',
     'upload_folder': './api/uploads',  # Temporary upload location
-    'threshold': 0.6,
-    'batch_size': 8,
+    'threshold': 0.675,
+    'batch_size': 32,
     'log_file': './api_server.log'
 }
 
@@ -248,13 +248,36 @@ def detect_forgery():
         filename = secure_filename(file.filename)
         filepath = os.path.join(config['upload_folder'], filename)
         file.save(filepath)
+
+        # Add logging for file type
+        import mimetypes
+        file_type = mimetypes.guess_type(filepath)[0]
+        logger.info(f"Processing file of type: {file_type}")
         
         # Process the image
         start_time = time.time()
         result = detector.detect(filepath)
         
+        # Check if there's an error in the result
+        if 'error' in result:
+            return jsonify({
+                'error': result['error'],
+                'filename': filename
+            }), 500
+        
+        # Handle missing prediction key
+        if 'prediction' not in result:
+            logger.warning(f"Missing 'prediction' key in detection result: {result}")
+            # Use probability if available, otherwise default to 0
+            probability = result.get('probability', 0)
+            prediction = 1 if probability >= detector.threshold else 0
+        else:
+            # Use existing prediction
+            prediction = result['prediction']
+            probability = result.get('probability', 0.5)
+        
         # Determine result type
-        is_forged = result['prediction'] == 1
+        is_forged = prediction == 1
         result_type = 'forged' if is_forged else 'authentic'
         
         # Get the original image as base64
@@ -264,7 +287,7 @@ def detect_forgery():
         result_data = {
             'image': filename,
             'result': result_type,
-            'probability': f"{float(result['probability']):.4f}",
+            'probability': f"{float(probability):.4f}",
             'threshold': f"{float(detector.threshold):.4f}",
             'processing_time': f"{time.time() - start_time:.4f}",
             'timestamp': datetime.now().isoformat(),
@@ -280,7 +303,7 @@ def detect_forgery():
             'run_id': run_id,
             'filename': filename,
             'result': result_type,
-            'probability': float(result['probability']),
+            'probability': float(probability),
             'threshold': float(detector.threshold),
             'processing_time': time.time() - start_time,
             'timestamp': int(time.time()),
