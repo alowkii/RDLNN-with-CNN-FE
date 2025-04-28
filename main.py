@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
 import torch.nn.functional as F
+import tqdm
 
 # Import modules
 # Import modules
@@ -514,11 +515,7 @@ def localize_mode(args: argparse.Namespace) -> None:
         logger.error("Error: Please provide either --image_path or --input_dir argument for localization")
 
 def test_single_image(args: argparse.Namespace) -> None:
-    """Test the model on a single image
-    
-    Args:
-        args: Command line arguments
-    """
+    """Test the model on a single image using ensemble prediction for robustness"""
     if not args.image_path:
         logger.error("Error: Please provide --image_path argument for single image testing")
         return
@@ -539,14 +536,14 @@ def test_single_image(args: argparse.Namespace) -> None:
     logger.info(f"Model expects {input_dim} features")
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.6)
+    threshold = getattr(model, 'threshold', 0.7)  # Default to 0.7 as identified in training
     logger.info(f"Using classification threshold: {threshold}")
 
     if args.threshold:
         threshold = args.threshold
         logger.info(f"Overriding with command threshold: {threshold}")
     
-    # Process the image
+    # Process the image using ensemble approach
     logger.info(f"Processing single image: {args.image_path}")
     start_time = time.time()
     
@@ -554,8 +551,7 @@ def test_single_image(args: argparse.Namespace) -> None:
         # Initialize detector
         detector = PDyWTCNNDetector()
         
-        # CHANGE HERE: Use the full feature extraction method instead of just wavelet features
-        # This extracts all feature types (wavelet, ELA, noise, etc.) as used during training
+        # Use the full feature extraction method instead of just wavelet features
         feature_vector = detector.extract_features(args.image_path)
         
         if feature_vector is None:

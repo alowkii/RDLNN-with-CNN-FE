@@ -759,3 +759,53 @@ class RegressionDLNN:
         
         logger.info(f"Model loaded successfully from {filepath}")
         return model
+    
+    def find_optimal_threshold(self, X, y, metric='f1'):
+        """
+        Find the optimal classification threshold based on validation data
+        
+        Args:
+            X: Feature vectors
+            y: True labels
+            metric: Metric to optimize ('f1', 'precision', 'recall', 'accuracy')
+            
+        Returns:
+            Optimal threshold value
+        """
+        # Get predictions
+        _, probs = self.predict(X)
+        
+        # Try different thresholds
+        thresholds = np.linspace(0.1, 0.9, 33)
+        best_score = 0
+        best_threshold = 0.5
+        
+        for threshold in thresholds:
+            preds = (probs >= threshold).astype(int)
+            
+            # Calculate metrics
+            tp = np.sum((preds == 1) & (y == 1))
+            fp = np.sum((preds == 1) & (y == 0))
+            tn = np.sum((preds == 0) & (y == 0))
+            fn = np.sum((preds == 0) & (y == 1))
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            accuracy = (tp + tn) / len(y)
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+            
+            # Select metric to optimize
+            if metric == 'f1':
+                score = f1
+            elif metric == 'precision':
+                score = precision
+            elif metric == 'recall':
+                score = recall
+            elif metric == 'accuracy':
+                score = accuracy
+            
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+        
+        return best_threshold

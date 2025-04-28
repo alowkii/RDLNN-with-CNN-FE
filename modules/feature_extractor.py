@@ -1539,6 +1539,71 @@ class PDyWTCNNDetector:
         except Exception as e:
             logger.error(f"Error extracting quality features: {e}")
             return np.zeros(15)
+    def ensemble_detect(self, image_path, num_models=5, threshold=None):
+        """
+        Make ensemble predictions with MC Dropout for more robust results
+        
+        Args:
+            image_path: Path to image
+            num_models: Number of forward passes with dropout enabled
+            threshold: Classification threshold (uses model's threshold if None)
+            
+        Returns:
+            Dictionary with detection results
+        """
+        with torch.no_grad():
+            # Extract comprehensive features
+            feature_vector = self.extract_features(image_path)
+            
+            if feature_vector is None:
+                return {'error': 'Failed to extract features'}
+                
+            feature_vector = feature_vector.reshape(1, -1)
+            
+            # Use RDLNN model if available
+            if self.rdlnn_model:
+                # Apply feature selection if available
+                if hasattr(self.rdlnn_model, 'feature_selector') and self.rdlnn_model.feature_selector is not None:
+                    try:
+                        feature_vector = self.rdlnn_model.feature_selector(feature_vector)
+                    except Exception as e:
+                        logger.error(f"Error applying feature selection: {e}")
+                
+                # Get default threshold
+                if threshold is None:
+                    threshold = getattr(self.rdlnn_model, 'threshold', 0.5)
+                    
+                # Enable dropout for MC Dropout
+                for m in self.rdlnn_model.model:
+                    if isinstance(m, torch.nn.Dropout):
+                        m.train()
+                
+                # Make multiple predictions
+                all_probs = []
+                for _ in range(num_models):
+                    _, confidences = self.rdlnn_model.predict(feature_vector)
+                    all_probs.append(confidences)
+                
+                # Reset to evaluation mode
+                self.rdlnn_model.model.eval()
+                
+                # Aggregate predictions
+                all_probs = np.array(all_probs)
+                mean_prob = np.mean(all_probs, axis=0)[0]
+                std_prob = np.std(all_probs, axis=0)[0]
+                
+                # Make final prediction
+                prediction = 1 if mean_prob >= threshold else 0
+                
+                return {
+                    'prediction': prediction,
+                    'probability': float(mean_prob),
+                    'uncertainty': float(std_prob),
+                    'threshold': threshold
+                }
+            
+            # Fallback to regular detection
+            return self.detect(image_path)
         
 def demo_forgery_detection(image_path, model_path=None, localization_model_path=None, output_dir='results'):
     """
@@ -1587,7 +1652,6 @@ def demo_forgery_detection(image_path, model_path=None, localization_model_path=
                 print(f"Found {len(localization_result['region_proposals'])} suspicious regions.")
                 for i, region in enumerate(localization_result['region_proposals']):
                     print(f"Region {i+1}: x={region['x']}, y={region['y']}, width={region['width']}, height={region['height']}")
-
 
 if __name__ == "__main__":
     import argparse

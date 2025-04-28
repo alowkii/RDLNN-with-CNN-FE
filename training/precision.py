@@ -279,6 +279,16 @@ def precision_tuned_training(features_path, model_path, output_dir,
                            [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9], 
                            output_dir)
     
+    # Find optimal threshold on validation set
+    logger.info("Finding optimal classification threshold...")
+    optimal_threshold = model.find_optimal_threshold(X_val, y_val, metric='f1')
+    model.threshold = optimal_threshold
+    logger.info(f"Setting model threshold to {optimal_threshold}")
+
+    # Save the model with the optimized threshold
+    model.save(model_path)
+    logger.info(f"Model saved with optimized threshold {optimal_threshold} to {model_path}")
+    
     return model, X_val, y_val
 
 def evaluate_with_thresholds(model, X_val, y_val, thresholds, output_dir):
