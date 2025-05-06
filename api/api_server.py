@@ -41,11 +41,11 @@ batch_processor = None
 # Configuration
 config = {
     'detection_model_path': '../data/models/rdlnn_model.pth',
-    'localization_model_path': '../data/models/cnn_localizer.pth',
-    'upload_folder': './api/uploads',  # Temporary upload location
+    'localization_model_path': '../data/models/localizer.pth',
+    'upload_folder': '../api/uploads',
     'threshold': 0.675,
     'batch_size': 32,
-    'log_file': './api_server.log'
+    'log_file': '../api/api_server.log'
 }
 
 # Set up logging
@@ -177,22 +177,70 @@ def initialize_models():
         # Ensure directories exist
         ensure_directories()
         
-        # Initialize the detector (includes both detection and localization)
-        detector = PDyWTCNNDetector(
-            model_path=config['detection_model_path'],
-            localization_model_path=config['localization_model_path']
-        )
+        # Explicitly import RegressionDLNN to ensure it's available
+        from modules.rdlnn import RegressionDLNN
         
-        # If a specific threshold was provided, override the default
+        # Log the model paths we're using
+        logger.info(f"Using detection model path: {config['detection_model_path']}")
+        logger.info(f"Using localization model path: {config['localization_model_path']}")
+        
+        # Check if the model file exists
+        if not os.path.exists(config['detection_model_path']):
+            logger.error(f"Model file not found: {config['detection_model_path']}")
+            return False
+            
+        # Initialize the detector with explicit model loading
+        try:
+            # First try loading using direct RDLNN loading
+            rdlnn_model = RegressionDLNN.load(config['detection_model_path'])
+            logger.info(f"Successfully loaded RDLNN model directly")
+            
+            # Now initialize detector
+            detector = PDyWTCNNDetector(
+                model_path=config['detection_model_path'],
+                localization_model_path=config['localization_model_path']
+            )
+            
+            # Make sure detector has the RDLNN model
+            if not hasattr(detector, 'rdlnn_model') or detector.rdlnn_model is None:
+                logger.warning("PDyWTCNNDetector didn't load the RDLNN model; setting it explicitly")
+                detector.rdlnn_model = rdlnn_model
+                
+            # Verify the RDLNN model is correctly loaded
+            if hasattr(detector, 'rdlnn_model') and detector.rdlnn_model is not None:
+                logger.info("RDLNN model is correctly loaded in detector")
+                
+                # Check for feature selector
+                has_feature_selector = hasattr(detector.rdlnn_model, 'feature_selector') and detector.rdlnn_model.feature_selector is not None
+                logger.info(f"RDLNN model has feature selector: {has_feature_selector}")
+                
+                # Get the model's threshold
+                model_threshold = getattr(detector.rdlnn_model, 'threshold', None)
+                logger.info(f"RDLNN model threshold: {model_threshold}")
+                
+                # Set detector threshold to match model if available
+                if model_threshold is not None:
+                    detector.threshold = model_threshold
+                    logger.info(f"Set detector threshold to match model: {detector.threshold}")
+            else:
+                logger.error("Failed to load RDLNN model in detector after explicit attempt")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error during explicit model loading: {e}")
+            logger.error(traceback.format_exc())
+            return False
+        
+        # If a specific threshold was provided in config, override the default
         if config['threshold'] is not None:
+            logger.info(f"Overriding threshold with config value: {config['threshold']}")
             detector.threshold = config['threshold']
         
-        # Initialize batch processor if we have a detection model
-        if detector:
-            batch_processor = OptimizedBatchProcessor(batch_size=config['batch_size'])
+        # Initialize batch processor
+        batch_processor = OptimizedBatchProcessor(batch_size=config['batch_size'])
         
         logger.info("Models initialized successfully")
-        logger.info(f"Using detection threshold: {detector.threshold:.2f}")
+        logger.info(f"Using detection threshold: {detector.threshold:.4f}")
         return True
         
     except Exception as e:
@@ -1132,6 +1180,11 @@ def rdlnn_detect():
     if not detector:
         return jsonify({'error': 'Models not initialized'}), 500
     
+    # Verify RDLNN model is available
+    if not hasattr(detector, 'rdlnn_model') or detector.rdlnn_model is None:
+        logger.error("RDLNN model not available for detection")
+        return jsonify({'error': 'RDLNN model not properly initialized'}), 500
+    
     if 'image' not in request.files:
         return jsonify({'error': 'No image provided'}), 400
     
@@ -1144,6 +1197,9 @@ def rdlnn_detect():
         filepath = os.path.join(config['upload_folder'], filename)
         file.save(filepath)
         
+        # Log file information
+        logger.info(f"Processing file: {filename}, size: {os.path.getsize(filepath)}")
+        
         # Get optional threshold
         threshold = request.form.get('threshold')
         if threshold:
@@ -1152,60 +1208,78 @@ def rdlnn_detect():
                 # Override threshold temporarily
                 original_threshold = detector.threshold
                 detector.threshold = threshold
+                logger.info(f"Using custom threshold from request: {threshold}")
             except ValueError:
                 threshold = None
         else:
             original_threshold = detector.threshold
             threshold = original_threshold
+            logger.info(f"Using default threshold: {threshold}")
         
-        # Process the image with RDLNN
+        # Process the image
         start_time = time.time()
         
-        # Check if detector has RDLNN model
-        if hasattr(detector, 'rdlnn_model') and detector.rdlnn_model:
-            # Extract features
-            feature_vector = detector.extract_features(filepath)
+        # Extract features using the comprehensive method
+        feature_vector = detector.extract_features(filepath)
+        
+        if feature_vector is None:
+            logger.error(f"Failed to extract features from {filepath}")
+            return jsonify({
+                'error': 'Failed to extract features from image'
+            }), 500
             
-            if feature_vector is None:
-                return jsonify({
-                    'error': 'Failed to extract features from image'
-                }), 500
+        # Log feature vector shape
+        logger.info(f"Extracted feature vector with shape: {feature_vector.shape}")
+        
+        # Reshape for prediction
+        feature_vector = feature_vector.reshape(1, -1)
+        
+        # Apply feature selection if available
+        if hasattr(detector.rdlnn_model, 'feature_selector') and detector.rdlnn_model.feature_selector is not None:
+            try:
+                logger.info(f"Applying feature selection, current shape: {feature_vector.shape}")
+                feature_vector = detector.rdlnn_model.feature_selector(feature_vector)
+                logger.info(f"After feature selection, shape: {feature_vector.shape}")
+            except Exception as e:
+                logger.error(f"Error applying feature selection: {e}")
+                logger.error(traceback.format_exc())
+        
+        # Get input dimension expected by the model
+        input_dim = detector.rdlnn_model.model[0].in_features
+        logger.info(f"Model expects input dimension: {input_dim}")
+        
+        # Ensure feature vector has the right dimension
+        if feature_vector.shape[1] != input_dim:
+            logger.warning(f"Feature dimension mismatch: got {feature_vector.shape[1]}, expected {input_dim}")
             
-            # Reshape for prediction
-            feature_vector = feature_vector.reshape(1, -1)
-
-            # Apply feature selection if available
-            if hasattr(detector.rdlnn_model, 'feature_selector') and detector.rdlnn_model.feature_selector is not None:
-                try:
-                    feature_vector = detector.rdlnn_model.feature_selector(feature_vector)
-                    logger.info(f"Applied feature selection, new shape: {feature_vector.shape}")
-                except Exception as e:
-                    logger.error(f"Error applying feature selection: {e}")
-            
-            # Make prediction with RDLNN model
-            predictions, probabilities = detector.rdlnn_model.predict(feature_vector)
-            
-            # Get the first (only) prediction and probability
-            prediction = int(predictions[0])
-            probability = float(probabilities[0])
-            
-            result = {
-                'prediction': prediction,
-                'probability': probability
-            }
-        else:
-            # Fall back to regular detection if RDLNN not available
-            result = detector.detect(filepath)
-            
-        # Determine result type
-        is_forged = result['prediction'] == 1
+            if feature_vector.shape[1] > input_dim:
+                logger.info(f"Truncating features from {feature_vector.shape[1]} to {input_dim}")
+                feature_vector = feature_vector[:, :input_dim]
+            else:
+                logger.info(f"Padding features from {feature_vector.shape[1]} to {input_dim}")
+                padded = np.zeros((1, input_dim))
+                padded[:, :feature_vector.shape[1]] = feature_vector
+                feature_vector = padded
+        
+        # Make prediction with RDLNN model
+        logger.info("Making prediction with RDLNN model")
+        predictions, probabilities = detector.rdlnn_model.predict(feature_vector)
+        
+        # Get the prediction results
+        prediction = int(predictions[0])
+        probability = float(probabilities[0])
+        
+        # Determine result type based on threshold
+        is_forged = probability >= threshold
         result_type = 'forged' if is_forged else 'authentic'
+        
+        logger.info(f"Prediction: {prediction}, Probability: {probability:.4f}, Result: {result_type}")
         
         # Format the response
         response = {
             'filename': filename,
             'result': result_type,
-            'probability': float(result.get('probability', 0.5)),
+            'probability': probability,
             'threshold': float(threshold),
             'processing_time': time.time() - start_time,
             'timestamp': int(time.time()),
@@ -1247,6 +1321,158 @@ def rdlnn_localize():
         'message': 'RDLNN localization endpoint is not implemented yet'
     }), 501
 
+@app.route('/api/rdlnn/debug', methods=['POST'])
+def rdlnn_debug():
+    """
+    Debug endpoint that provides detailed information about the RDLNN processing pipeline
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Debug info container
+        debug_info = {
+            'image': {
+                'filename': filename,
+                'filepath': filepath,
+                'size': os.path.getsize(filepath),
+                'mime_type': file.content_type
+            },
+            'detector': {
+                'has_rdlnn': hasattr(detector, 'rdlnn_model') and detector.rdlnn_model is not None,
+                'threshold': detector.threshold
+            },
+            'processing_steps': []
+        }
+        
+        # Check if RDLNN model is available
+        if hasattr(detector, 'rdlnn_model') and detector.rdlnn_model is not None:
+            model = detector.rdlnn_model
+            debug_info['rdlnn_model'] = {
+                'input_dim': model.model[0].in_features,
+                'has_feature_selector': hasattr(model, 'feature_selector') and model.feature_selector is not None,
+                'has_threshold': hasattr(model, 'threshold'),
+                'threshold': getattr(model, 'threshold', 0.5)
+            }
+        
+        # Step 1: Extract features
+        debug_info['processing_steps'].append({
+            'step': 'Feature extraction',
+            'start_time': time.time()
+        })
+        
+        feature_vector = detector.extract_features(filepath)
+        
+        if feature_vector is None:
+            debug_info['processing_steps'][-1]['error'] = 'Failed to extract features'
+            return jsonify(debug_info), 500
+        
+        # Reshape for prediction
+        feature_vector = feature_vector.reshape(1, -1)
+        
+        debug_info['processing_steps'][-1].update({
+            'end_time': time.time(),
+            'feature_shape': feature_vector.shape,
+            'feature_stats': {
+                'min': float(np.min(feature_vector)),
+                'max': float(np.max(feature_vector)),
+                'mean': float(np.mean(feature_vector)),
+                'std': float(np.std(feature_vector))
+            }
+        })
+        
+        # Step 2: Apply feature selection if available
+        debug_info['processing_steps'].append({
+            'step': 'Feature selection',
+            'start_time': time.time()
+        })
+        
+        if hasattr(detector.rdlnn_model, 'feature_selector') and detector.rdlnn_model.feature_selector is not None:
+            try:
+                original_shape = feature_vector.shape
+                feature_vector = detector.rdlnn_model.feature_selector(feature_vector)
+                
+                debug_info['processing_steps'][-1].update({
+                    'end_time': time.time(),
+                    'original_shape': original_shape,
+                    'new_shape': feature_vector.shape,
+                    'feature_stats_after': {
+                        'min': float(np.min(feature_vector)),
+                        'max': float(np.max(feature_vector)),
+                        'mean': float(np.mean(feature_vector)),
+                        'std': float(np.std(feature_vector))
+                    }
+                })
+            except Exception as e:
+                debug_info['processing_steps'][-1].update({
+                    'end_time': time.time(),
+                    'error': str(e),
+                    'traceback': traceback.format_exc()
+                })
+        else:
+            debug_info['processing_steps'][-1].update({
+                'end_time': time.time(),
+                'skipped': True,
+                'reason': 'No feature selector available'
+            })
+        
+        # Step 3: Make prediction
+        debug_info['processing_steps'].append({
+            'step': 'Prediction',
+            'start_time': time.time()
+        })
+        
+        try:
+            # Make prediction
+            predictions, probabilities = detector.rdlnn_model.predict(feature_vector)
+            
+            debug_info['processing_steps'][-1].update({
+                'end_time': time.time(),
+                'raw_predictions': predictions.tolist(),
+                'raw_probabilities': probabilities.tolist(),
+                'threshold': float(detector.threshold)
+            })
+            
+            # Add processed results
+            debug_info['results'] = {
+                'prediction': int(predictions[0]),
+                'probability': float(probabilities[0]),
+                'result_type': 'forged' if predictions[0] == 1 else 'authentic',
+                'threshold': float(detector.threshold)
+            }
+            
+        except Exception as e:
+            debug_info['processing_steps'][-1].update({
+                'end_time': time.time(),
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            })
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            debug_info['cleanup_error'] = str(e)
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 def parse_args():
     """Parse command line arguments for the API server"""
     parser = argparse.ArgumentParser(description='Stateless Image Forgery Detection API Server')
@@ -1262,7 +1488,7 @@ def parse_args():
     # Model paths
     parser.add_argument('--detection-model', type=str, default='../data/models/rdlnn_model.pth',
                         help='Path to detection model')
-    parser.add_argument('--localization-model', type=str, default='../data/models/cnn_localizer.pth',
+    parser.add_argument('--localization-model', type=str, default='../data/models/localizer.pth',
                         help='Path to localization model')
     
     # Directories
