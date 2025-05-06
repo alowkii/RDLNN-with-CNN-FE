@@ -598,7 +598,7 @@ class PDyWTCNNDetector:
         
     def preprocess_image(self, image_path):
         """
-        Preprocess an image for the detector
+        Preprocess an image for the detector with enhanced TIFF support
         
         Args:
             image_path: Path to the image file
@@ -607,12 +607,39 @@ class PDyWTCNNDetector:
             Preprocessed image tensor in YCbCr color space
         """
         try:
-            from PIL import Image
-            Image.MAX_IMAGE_PIXELS = None
+            from PIL import Image, TiffImagePlugin
+            Image.MAX_IMAGE_PIXELS = None  # Avoid DecompressionBomb error for large images
 
             # Load image with explicit RGB conversion to ensure consistent handling
             logger.info(f"Loading image from {image_path}")
-            img = Image.open(image_path).convert("RGB")
+            
+            # Enhanced TIFF handling
+            if image_path.lower().endswith(('.tif', '.tiff')):
+                # TIFF-specific loading options
+                img = Image.open(image_path)
+                
+                # Check if it's a multi-page TIFF and use first page
+                if hasattr(img, 'n_frames') and img.n_frames > 1:
+                    logger.info(f"Multi-page TIFF detected with {img.n_frames} frames, using first frame")
+                    img.seek(0)  # Select first frame
+                
+                # Handle different TIFF color modes
+                if img.mode in ['I;16', 'I']:
+                    logger.info(f"Converting high bit-depth TIFF from {img.mode} to RGB")
+                    # Normalize 16-bit to 8-bit for consistent processing
+                    img = img.point(lambda i: i * (255./65535.)).convert('RGB')
+                elif img.mode not in ['RGB', 'RGBA']:
+                    logger.info(f"Converting TIFF from {img.mode} to RGB")
+                    img = img.convert('RGB')
+                
+                # Handle RGBA by removing alpha channel
+                if img.mode == 'RGBA':
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[3])  # Use alpha as mask
+                    img = background
+            else:
+                # Normal loading for other formats
+                img = Image.open(image_path).convert("RGB")
             
             # Log image details for debugging
             logger.info(f"Image size: {img.size}, mode: {img.mode}")
@@ -638,12 +665,13 @@ class PDyWTCNNDetector:
             logger.info(f"YCbCr tensor shape: {ycbcr_tensor.shape}")
 
             return ycbcr_tensor
-            
+                
         except Exception as e:
             logger.error(f"Error preprocessing image {image_path}: {e}")
+            import traceback
             logger.error(traceback.format_exc())
             return None
-    
+
     def extract_wavelet_features(self, ycbcr_tensor):
         """
         Extract wavelet features from a YCbCr image tensor
@@ -785,7 +813,7 @@ class PDyWTCNNDetector:
         
     def extract_features(self, image_path):
         """
-        Extract comprehensive features from an image
+        Extract comprehensive features from an image with format awareness
         
         Args:
             image_path: Path to the image file
@@ -794,6 +822,14 @@ class PDyWTCNNDetector:
             Combined feature vector from multiple feature extractors
         """
         try:
+            # Get image format information
+            import mimetypes
+            import os
+            
+            file_ext = os.path.splitext(image_path)[1].lower()
+            is_tiff = file_ext in ['.tif', '.tiff']
+            is_jpeg = file_ext in ['.jpg', '.jpeg']
+            
             # Get basic PDyWT features
             ycbcr_tensor = self.preprocess_image(image_path)
             if ycbcr_tensor is None:
@@ -806,23 +842,37 @@ class PDyWTCNNDetector:
             pooled_features = F.adaptive_avg_pool2d(feature_tensor.unsqueeze(0), (1, 1))
             pdywt_vector = pooled_features.view(-1).cpu().numpy()
             
-            # Extract ELA features with error handling
+            # Extract ELA features with error handling - modify for TIFF awareness
             try:
-                ela_vector = self.extract_ela_features(image_path)
+                # For TIFF, we may need different ELA parameters
+                if is_tiff:
+                    ela_vector = self.extract_ela_features(image_path, quality=95)  # Higher quality for TIFF
+                elif is_jpeg:
+                    ela_vector = self.extract_ela_features(image_path, quality=85)  # Standard for JPEG
+                else:
+                    ela_vector = self.extract_ela_features(image_path)
             except Exception as e:
                 logger.warning(f"Error extracting ELA features, using zeros: {e}")
                 ela_vector = np.zeros(15)  # Use appropriate size
             
             # Extract noise features with error handling
             try:
-                noise_vector = self.extract_noise_features(image_path)
+                # Different kernel size depending on format
+                if is_tiff:
+                    noise_vector = self.extract_noise_features(image_path, kernel_size=5)  # Larger kernel for TIFF
+                else:
+                    noise_vector = self.extract_noise_features(image_path)
             except Exception as e:
                 logger.warning(f"Error extracting noise features, using zeros: {e}")
                 noise_vector = np.zeros(10)  # Use appropriate size
             
             # Extract JPEG ghost features with error handling
             try:
-                jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
+                # Adjust quality range for TIFF
+                if is_tiff:
+                    jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path, quality_range=[75, 85, 95])
+                else:
+                    jpeg_ghost_vector = self.extract_jpeg_ghost_features(image_path)
             except Exception as e:
                 logger.warning(f"Error extracting JPEG ghost features, using zeros: {e}")
                 jpeg_ghost_vector = np.zeros(100)  # Use appropriate size
@@ -849,6 +899,7 @@ class PDyWTCNNDetector:
             
         except Exception as e:
             logger.error(f"Error extracting features from {image_path}: {e}")
+            import traceback
             logger.error(traceback.format_exc())
             return None
 
@@ -1355,7 +1406,8 @@ class PDyWTCNNDetector:
 
     def extract_jpeg_ghost_features(self, image_path, quality_range=[65, 75, 85, 95]):
         """
-        Extract JPEG ghost features to detect compression inconsistencies
+        Extract JPEG ghost features to detect compression inconsistencies,
+        with format-specific adjustments
         
         Args:
             image_path: Path to image
@@ -1365,8 +1417,15 @@ class PDyWTCNNDetector:
             Ghost feature vector
         """
         try:
+            # Detect if this is a TIFF file
+            is_tiff = image_path.lower().endswith(('.tif', '.tiff'))
+            
             # Load original image
             original = np.array(Image.open(image_path).convert('RGB'))
+            
+            # For TIFF files, use higher quality parameters
+            if is_tiff:
+                quality_range = [85, 90, 95, 98]  # Higher quality range for TIFFs
             
             # Calculate features across different quality factors
             features = []
@@ -1408,14 +1467,14 @@ class PDyWTCNNDetector:
                     os.remove(temp_path)
                 except:
                     pass
-                    
+                        
             return np.array(features)
         
         except Exception as e:
             logger.error(f"Error extracting JPEG ghost features: {e}")
             # Return zeros with appropriate size - 25 per quality level
             return np.zeros(len(quality_range) * 25)
-        
+
     def extract_dct_features(self, image_path):
         """
         Extract features from DCT coefficients

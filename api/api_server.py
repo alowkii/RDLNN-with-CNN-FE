@@ -11,10 +11,16 @@ import torch
 from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from PIL import Image
+from PIL import Image, TiffTags
 import io
 import base64
 from datetime import datetime
+import mimetypes
+
+if '.tiff' not in mimetypes.types_map:
+    mimetypes.add_type('image/tiff', '.tiff')
+if '.tif' not in mimetypes.types_map:
+    mimetypes.add_type('image/tiff', '.tif')
 
 # Import modules from the forgery detection system
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -195,7 +201,6 @@ def initialize_models():
         return False
 
 # API Routes
-
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """
@@ -253,6 +258,26 @@ def detect_forgery():
         import mimetypes
         file_type = mimetypes.guess_type(filepath)[0]
         logger.info(f"Processing file of type: {file_type}")
+
+        # Get more detailed image information
+        try:
+            with Image.open(filepath) as img:
+                format_info = {
+                    'format': img.format,
+                    'mode': img.mode,
+                    'size': img.size,
+                }
+                # For TIFF images, gather additional metadata
+                if img.format == 'TIFF':
+                    tiff_tags = {}
+                    for tag, value in img.tag.items():
+                        tag_name = TiffTags.TAGS.get(tag, tag)
+                        tiff_tags[tag_name] = value
+                    format_info['tiff_tags'] = tiff_tags
+                logger.info(f"Processing file: {filename}, type: {file_type}, info: {format_info}")
+        except Exception as e:
+            logger.warning(f"Failed to get detailed image information: {e}")
+            logger.info(f"Processing file of type: {file_type}")
         
         # Process the image
         start_time = time.time()
@@ -646,7 +671,7 @@ def parse_args():
                         help='Temporary folder for uploaded images')
     
     # Processing parameters
-    parser.add_argument('--threshold', type=float, default=0.6,
+    parser.add_argument('--threshold', type=float, default=0.675,
                         help='Detection threshold')
     parser.add_argument('--batch-size', type=int, default=8,
                         help='Batch size for processing')
