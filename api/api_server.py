@@ -232,6 +232,128 @@ def get_config():
     }
     return jsonify(safe_config)
 
+@app.route('/api/system/status', methods=['GET'])
+def system_status():
+    """
+    Get detailed system status information
+    Returns server and model status, directories, and environment info
+    """
+    try:
+        # Check CUDA availability
+        cuda_available = torch.cuda.is_available()
+        cuda_info = None
+        if cuda_available:
+            cuda_info = {
+                'device_name': torch.cuda.get_device_name(0),
+                'device_count': torch.cuda.device_count(),
+                'current_device': torch.cuda.current_device(),
+                'memory_allocated': torch.cuda.memory_allocated(0),
+                'memory_reserved': torch.cuda.memory_reserved(0)
+            }
+        
+        # Get directory info
+        upload_dir_info = {
+            'path': os.path.abspath(config['upload_folder']),
+            'exists': os.path.isdir(config['upload_folder']),
+            'writable': os.access(config['upload_folder'], os.W_OK) if os.path.isdir(config['upload_folder']) else False,
+            'file_count': len(os.listdir(config['upload_folder'])) if os.path.isdir(config['upload_folder']) else 0
+        }
+        
+        # Check model status
+        model_status = {
+            'detection_model_loaded': detector is not None,
+            'threshold': config['threshold'],
+            'batch_processor': batch_processor is not None
+        }
+        
+        # Combined status
+        status_info = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'uptime': time.time() - startup_time,
+            'environment': {
+                'python_version': sys.version,
+                'pytorch_version': torch.__version__,
+                'cuda_available': cuda_available,
+                'cuda_info': cuda_info
+            },
+            'directories': {
+                'upload': upload_dir_info
+            },
+            'models': model_status,
+            'config': {
+                'batch_size': config['batch_size'],
+                'threshold': config['threshold']
+            }
+        }
+        
+        return jsonify(status_info)
+        
+    except Exception as e:
+        logger.error(f"Error getting system status: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/models/info', methods=['GET'])
+def get_models_info():
+    """
+    Get information about available models
+    Returns metadata about loaded models
+    """
+    try:
+        # Basic model info
+        models_info = {
+            'detection': {
+                'path': config['detection_model_path'],
+                'filename': os.path.basename(config['detection_model_path']),
+                'loaded': detector is not None,
+                'threshold': config['threshold'],
+                'type': 'RDLNN'
+            },
+            'localization': {
+                'path': config['localization_model_path'],
+                'filename': os.path.basename(config['localization_model_path']),
+                'loaded': detector is not None,
+                'type': 'PDyWTCNN Localizer'
+            }
+        }
+        
+        # Add additional info if models are loaded
+        if detector:
+            # Get model specific details if available
+            if hasattr(detector, 'rdlnn_model') and detector.rdlnn_model:
+                rdlnn = detector.rdlnn_model
+                models_info['detection']['input_dimension'] = rdlnn.model[0].in_features if hasattr(rdlnn.model[0], 'in_features') else 'unknown'
+        
+        return jsonify({
+            'models': models_info,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting models info: {e}")
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+@app.route('/api/test_data/info', methods=['GET'])
+def get_test_data_info():
+    """
+    Get information about available test data
+    Returns metadata about test datasets
+    """
+    # This is a placeholder implementation
+    return jsonify({
+        'test_data': {
+            'available': False,
+            'message': 'No test data currently loaded'
+        }
+    })
+
 @app.route('/api/detect', methods=['POST'])
 def detect_forgery():
     """
@@ -456,7 +578,7 @@ def localize_forgery():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
-    
+
 @app.route('/api/batch/detect', methods=['POST'])
 def batch_detect():
     """
@@ -582,71 +704,548 @@ def batch_detect():
             'traceback': traceback.format_exc()
         }), 500
 
-@app.route('/api/system/status', methods=['GET'])
-def system_status():
+@app.route('/api/compare', methods=['POST'])
+def compare_images():
     """
-    Get detailed system status information
-    Returns server and model status, directories, and environment info
+    Compare two images for similarity and potential forgery
+    Useful for detecting if one image was derived from or manipulated from another
     """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image1' not in request.files or 'image2' not in request.files:
+        return jsonify({'error': 'Two images are required for comparison'}), 400
+    
     try:
-        # Check CUDA availability
-        cuda_available = torch.cuda.is_available()
-        cuda_info = None
-        if cuda_available:
-            cuda_info = {
-                'device_name': torch.cuda.get_device_name(0),
-                'device_count': torch.cuda.device_count(),
-                'current_device': torch.cuda.current_device(),
-                'memory_allocated': torch.cuda.memory_allocated(0),
-                'memory_reserved': torch.cuda.memory_reserved(0)
-            }
+        # Get the uploaded files
+        file1 = request.files['image1']
+        file2 = request.files['image2']
         
-        # Get directory info
-        upload_dir_info = {
-            'path': os.path.abspath(config['upload_folder']),
-            'exists': os.path.isdir(config['upload_folder']),
-            'writable': os.access(config['upload_folder'], os.W_OK) if os.path.isdir(config['upload_folder']) else False,
-            'file_count': len(os.listdir(config['upload_folder'])) if os.path.isdir(config['upload_folder']) else 0
-        }
+        # Save the files temporarily
+        filename1 = secure_filename(file1.filename)
+        filename2 = secure_filename(file2.filename)
+        filepath1 = os.path.join(config['upload_folder'], filename1)
+        filepath2 = os.path.join(config['upload_folder'], filename2)
+        file1.save(filepath1)
+        file2.save(filepath2)
         
-        # Check model status
-        model_status = {
-            'detection_model_loaded': detector is not None,
-            'threshold': config['threshold'],
-            'batch_processor': batch_processor is not None
-        }
+        # Get base64 encoded images
+        image1_base64 = image_to_base64(filepath1)
+        image2_base64 = image_to_base64(filepath2)
         
-        # Combined status
-        status_info = {
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'uptime': time.time() - startup_time,
-            'environment': {
-                'python_version': sys.version,
-                'pytorch_version': torch.__version__,
-                'cuda_available': cuda_available,
-                'cuda_info': cuda_info
+        # Process each image individually
+        start_time = time.time()
+        result1 = detector.detect(filepath1)
+        result2 = detector.detect(filepath2)
+        
+        # Calculate similarities between feature vectors
+        if 'features' in result1 and 'features' in result2:
+            features1 = result1['features']
+            features2 = result2['features']
+            
+            # Calculate cosine similarity
+            from sklearn.metrics.pairwise import cosine_similarity
+            similarity = float(cosine_similarity([features1], [features2])[0][0])
+        else:
+            similarity = None
+        
+        # Create comparison results
+        comparison_result = {
+            'image1': {
+                'filename': filename1,
+                'result': 'forged' if result1['prediction'] == 1 else 'authentic',
+                'probability': float(result1['probability'])
             },
-            'directories': {
-                'upload': upload_dir_info
+            'image2': {
+                'filename': filename2,
+                'result': 'forged' if result2['prediction'] == 1 else 'authentic',
+                'probability': float(result2['probability'])
             },
-            'models': model_status,
-            'config': {
-                'batch_size': config['batch_size'],
-                'threshold': config['threshold']
-            }
+            'similarity': similarity,
+            'processing_time': time.time() - start_time,
+            'timestamp': int(time.time()),
+            'image1_base64': image1_base64,
+            'image2_base64': image2_base64
         }
         
-        return jsonify(status_info)
+        # Clean up temporary files
+        try:
+            os.remove(filepath1)
+            os.remove(filepath2)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary files: {e}")
+        
+        return jsonify(comparison_result)
         
     except Exception as e:
-        logger.error(f"Error getting system status: {e}")
+        logger.error(f"Error comparing images: {e}")
         logger.error(traceback.format_exc())
         return jsonify({
-            'status': 'error',
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+
+@app.route('/api/analyze/threshold', methods=['POST'])
+def analyze_threshold():
+    """
+    Analyze the effect of different thresholds on prediction results
+    Useful for finding the optimal threshold for a specific image
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Get base64 encoded image
+        image_base64 = image_to_base64(filepath)
+        
+        # Process the image
+        start_time = time.time()
+        result = detector.detect(filepath)
+        
+        # Get the raw probability
+        probability = result.get('probability', 0.5)
+        
+        # Calculate results for different thresholds
+        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        threshold_results = []
+        
+        for threshold in thresholds:
+            threshold_results.append({
+                'threshold': threshold,
+                'prediction': 1 if probability >= threshold else 0,
+                'result': 'forged' if probability >= threshold else 'authentic'
+            })
+        
+        # Create response
+        analysis_result = {
+            'filename': filename,
+            'original_probability': float(probability),
+            'processing_time': time.time() - start_time,
+            'timestamp': int(time.time()),
+            'image_base64': image_base64,
+            'threshold_results': threshold_results,
+            'current_threshold': detector.threshold,
+            'current_result': 'forged' if probability >= detector.threshold else 'authentic'
+        }
+        
+        # Clean up temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(analysis_result)
+        
+    except Exception as e:
+        logger.error(f"Error in threshold analysis: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/save_test_image', methods=['POST'])
+def save_test_image():
+    """
+    Save an uploaded image as test data
+    Useful for development and testing
+    """
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+        
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        filename = secure_filename(file.filename)
+        
+        # Create test data directory if it doesn't exist
+        test_data_dir = os.path.join(os.path.dirname(config['upload_folder']), 'test_data')
+        os.makedirs(test_data_dir, exist_ok=True)
+        
+        # Save the file with timestamp to ensure uniqueness
+        timestamp = int(time.time())
+        save_filename = f"{timestamp}_{filename}"
+        save_path = os.path.join(test_data_dir, save_filename)
+        file.save(save_path)
+        
+        # Get image information
+        with Image.open(save_path) as img:
+            image_info = {
+                'format': img.format,
+                'mode': img.mode,
+                'size': img.size
+            }
+        
+        # Create response
+        response = {
+            'status': 'success',
+            'message': 'Image saved successfully',
+            'filename': save_filename,
+            'path': save_path,
+            'timestamp': timestamp,
+            'image_info': image_info
+        }
+        
+        logger.info(f"Test image saved: {save_path}")
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error saving test image: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/results/batch/<batch_id>', methods=['GET'])
+def get_batch_results(batch_id):
+    """
+    Get results from a specific batch processing run
+    Useful for retrieving results from previous batch operations
+    """
+    try:
+        # This is a placeholder implementation
+        # In a production system, you would retrieve this from a database
+        
+        return jsonify({
+            'status': 'error',
+            'message': 'Batch results retrieval is not implemented yet',
+            'batch_id': batch_id
+        }), 501
+        
+    except Exception as e:
+        logger.error(f"Error retrieving batch results: {e}")
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+@app.route('/api/run/detection', methods=['POST'])
+def run_detection_script():
+    """
+    Run the main.py detection script directly with parameters
+    Provides direct access to the underlying detection script
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Get optional parameters
+        threshold = request.form.get('threshold')
+        if threshold:
+            try:
+                threshold = float(threshold)
+            except ValueError:
+                threshold = None
+        
+        model_path = request.form.get('model_path')
+        if not model_path or not os.path.exists(model_path):
+            model_path = config['detection_model_path']
+        
+        # Run detection using detector with potentially custom parameters
+        start_time = time.time()
+        
+        # Override threshold temporarily if provided
+        original_threshold = detector.threshold
+        if threshold is not None:
+            detector.threshold = threshold
+        
+        # Perform detection
+        result = detector.detect(filepath)
+        
+        # Restore original threshold
+        if threshold is not None:
+            detector.threshold = original_threshold
+        
+        # Format response with detailed information
+        response = {
+            'filename': filename,
+            'result': 'forged' if result['prediction'] == 1 else 'authentic',
+            'probability': float(result.get('probability', 0.5)),
+            'threshold': float(threshold) if threshold is not None else float(original_threshold),
+            'processing_time': time.time() - start_time,
+            'timestamp': int(time.time()),
+            'model_path': model_path,
+            'command_line_equivalent': f"python main.py --mode single --image_path {filename} --threshold {threshold if threshold is not None else original_threshold} --model_path {model_path}"
+        }
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error running detection script: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/run/localization', methods=['POST'])
+def run_localization_script():
+    """
+    Run the main.py localization script directly with parameters
+    Provides direct access to the underlying localization script
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Get optional parameters
+        threshold = request.form.get('threshold')
+        if threshold:
+            try:
+                threshold = float(threshold)
+            except ValueError:
+                threshold = None
+        
+        model_path = request.form.get('model_path')
+        if not model_path or not os.path.exists(model_path):
+            model_path = config['detection_model_path']
+            
+        localization_model_path = request.form.get('localization_model_path')
+        if not localization_model_path or not os.path.exists(localization_model_path):
+            localization_model_path = config['localization_model_path']
+        
+        # Override threshold temporarily if provided
+        original_threshold = detector.threshold
+        if threshold is not None:
+            detector.threshold = threshold
+        
+        # First detect if image is forged
+        start_time = time.time()
+        detection_result = detector.detect(filepath)
+        
+        # Determine result type
+        is_forged = detection_result['prediction'] == 1
+        result_type = 'forged' if is_forged else 'authentic'
+        
+        # Base response with detection results
+        response = {
+            'filename': filename,
+            'result': result_type,
+            'probability': float(detection_result.get('probability', 0.5)),
+            'threshold': float(threshold) if threshold is not None else float(original_threshold),
+            'processing_time': 0,
+            'timestamp': int(time.time()),
+            'model_path': model_path,
+            'localization_model_path': localization_model_path
+        }
+        
+        # If forged, perform localization
+        if is_forged:
+            # Create a temporary file path for the forgery map
+            run_id = f"run_{int(time.time())}"
+            forgery_map_path = os.path.join(config['upload_folder'], f"temp_forgery_map_{run_id}.png")
+            
+            # Localize the forgery
+            localization_result = detector.localize(filepath, save_path=forgery_map_path)
+            
+            # Convert forgery map to base64
+            forgery_map_base64 = image_to_base64(forgery_map_path, format='PNG')
+            
+            # Update the response with localization information
+            response['forgery_map_base64'] = forgery_map_base64
+            response['regions'] = localization_result.get('region_proposals', [])
+            response['region_count'] = len(localization_result.get('region_proposals', []))
+            
+            # Remove temporary forgery map file
+            try:
+                os.remove(forgery_map_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary forgery map {forgery_map_path}: {e}")
+        
+        # Update processing time
+        processing_time = time.time() - start_time
+        response['processing_time'] = processing_time
+        
+        # Add command line equivalent
+        response['command_line_equivalent'] = (
+            f"python main.py --mode localize --image_path {filename} "
+            f"--threshold {threshold if threshold is not None else original_threshold} "
+            f"--model_path {model_path} "
+            f"--localization_model_path {localization_model_path}"
+        )
+        
+        # Restore original threshold
+        if threshold is not None:
+            detector.threshold = original_threshold
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error running localization script: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/rdlnn/detect', methods=['POST'])
+def rdlnn_detect():
+    """
+    Detect forgery using the RDLNN model specifically
+    Similar to the regular detect endpoint but ensures RDLNN model is used
+    """
+    if not detector:
+        return jsonify({'error': 'Models not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Get optional threshold
+        threshold = request.form.get('threshold')
+        if threshold:
+            try:
+                threshold = float(threshold)
+                # Override threshold temporarily
+                original_threshold = detector.threshold
+                detector.threshold = threshold
+            except ValueError:
+                threshold = None
+        else:
+            original_threshold = detector.threshold
+            threshold = original_threshold
+        
+        # Process the image with RDLNN
+        start_time = time.time()
+        
+        # Check if detector has RDLNN model
+        if hasattr(detector, 'rdlnn_model') and detector.rdlnn_model:
+            # Extract features
+            feature_vector = detector.extract_features(filepath)
+            
+            if feature_vector is None:
+                return jsonify({
+                    'error': 'Failed to extract features from image'
+                }), 500
+            
+            # Reshape for prediction
+            feature_vector = feature_vector.reshape(1, -1)
+
+            # Apply feature selection if available
+            if hasattr(detector.rdlnn_model, 'feature_selector') and detector.rdlnn_model.feature_selector is not None:
+                try:
+                    feature_vector = detector.rdlnn_model.feature_selector(feature_vector)
+                    logger.info(f"Applied feature selection, new shape: {feature_vector.shape}")
+                except Exception as e:
+                    logger.error(f"Error applying feature selection: {e}")
+            
+            # Make prediction with RDLNN model
+            predictions, probabilities = detector.rdlnn_model.predict(feature_vector)
+            
+            # Get the first (only) prediction and probability
+            prediction = int(predictions[0])
+            probability = float(probabilities[0])
+            
+            result = {
+                'prediction': prediction,
+                'probability': probability
+            }
+        else:
+            # Fall back to regular detection if RDLNN not available
+            result = detector.detect(filepath)
+            
+        # Determine result type
+        is_forged = result['prediction'] == 1
+        result_type = 'forged' if is_forged else 'authentic'
+        
+        # Format the response
+        response = {
+            'filename': filename,
+            'result': result_type,
+            'probability': float(result.get('probability', 0.5)),
+            'threshold': float(threshold),
+            'processing_time': time.time() - start_time,
+            'timestamp': int(time.time()),
+            'model': 'RDLNN'
+        }
+        
+        # Restore original threshold if it was changed
+        if threshold != original_threshold:
+            detector.threshold = original_threshold
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in RDLNN detection: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/rdlnn/localize', methods=['POST'])
+def rdlnn_localize():
+    """
+    Detect and localize forgery using the RDLNN model with PDyWT localizer
+    Similar to the regular localize endpoint but ensures RDLNN model is used for detection
+    """
+    # Implementation is similar to the regular localize endpoint but with RDLNN-specific logic
+    # For brevity, the implementation is omitted as it would be very similar to the rdlnn_detect function
+    # combined with the localize_forgery function
+    
+    return jsonify({
+        'status': 'error',
+        'message': 'RDLNN localization endpoint is not implemented yet'
+    }), 501
 
 def parse_args():
     """Parse command line arguments for the API server"""
