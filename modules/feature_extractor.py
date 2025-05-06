@@ -3,6 +3,7 @@
 Polar Dyadic Wavelet Transform (PDyWT) with CNN Feature Extraction - Fixed Version
 For image forgery detection and localization
 """
+import traceback
 import torch.serialization
 torch.serialization.add_safe_globals(['sklearn.preprocessing._data.StandardScaler'])
 

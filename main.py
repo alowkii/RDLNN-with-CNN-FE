@@ -150,7 +150,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument('--threshold',
                         type=float,
                         default=None,
-                        help='Override classification threshold (default: use model\'s threshold or 0.6)')
+                        help='Override classification threshold (default: use model\'s threshold or 0.675)')
     
     parser.add_argument('--debug', 
                         action='store_true', 
@@ -355,7 +355,7 @@ def test_mode(args: argparse.Namespace) -> None:
     logger.info(f"Model expects {input_dim} features")
     
     # Check if model has a custom threshold
-    threshold = getattr(model, 'threshold', 0.6)
+    threshold = getattr(model, 'threshold', 0.675)
     if args.threshold is not None:
         threshold = args.threshold
         logger.info(f"Using override threshold: {threshold}")
@@ -464,7 +464,7 @@ def localize_mode(args: argparse.Namespace) -> None:
     if threshold is None and hasattr(detector.rdlnn_model, 'threshold'):
         threshold = detector.rdlnn_model.threshold
     elif threshold is None:
-        threshold = 0.6
+        threshold = 0.675
     
     logger.info(f"Using classification threshold: {threshold}")
     

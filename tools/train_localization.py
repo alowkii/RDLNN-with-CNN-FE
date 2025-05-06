@@ -14,6 +14,7 @@ from PIL import Image
 from tqdm import tqdm
 import glob
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import logger, setup_logging
 from modules.model import SimpleLocalizationModel
