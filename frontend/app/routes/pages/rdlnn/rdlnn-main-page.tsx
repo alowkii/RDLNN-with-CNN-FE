@@ -1,7 +1,6 @@
 import { useState } from "react";
 import RDLNN from "./rdlnn-model";
 import ImageComparison from "./image-comparision";
-import Footer from "~/components/footer";
 
 export default function RDLNNPage() {
   const [currentTab, setCurrentTab] = useState<"detection" | "comparison">(
@@ -48,9 +47,6 @@ export default function RDLNNPage() {
       <div className="container mx-auto px-4">
         {currentTab === "detection" ? <RDLNN /> : <ImageComparison />}
       </div>
-
-      {/* Footer */}
-      <Footer />
     </div>
   );
 }

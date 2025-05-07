@@ -1,3 +1,5 @@
+import { Link } from "react-router";
+
 export default function Footer() {
   return (
     <footer className="bg-black bg-opacity-30 p-6 mt-16">
@@ -9,7 +11,10 @@ export default function Footer() {
               This image forgery detection system uses deep learning techniques
               to identify and localize manipulated regions in digital images.
               The RDLNN model is designed to detect various types of forgeries
-              including copy-move, splicing, and more.
+              including copy-move, splicing, and more. The DWT and DyWT models
+              are also available for comparison, providing a comprehensive
+              analysis of image integrity. This tool is intended for research
+              only.
             </p>
           </div>
           <div>
@@ -17,9 +22,9 @@ export default function Footer() {
             <p className="text-metallicsilver text-sm">
               The backend API provides comprehensive forgery detection
               capabilities. Visit the{" "}
-              <a href="/api" className="text-silversand hover:underline">
+              <Link to="/api" className="text-silversand hover:underline">
                 API Documentation
-              </a>{" "}
+              </Link>{" "}
               to learn more about the available endpoints.
             </p>
           </div>

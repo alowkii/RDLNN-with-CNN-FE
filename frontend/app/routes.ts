@@ -7,4 +7,5 @@ export default [
     route("dwt", "routes/pages/dwt/dwt.tsx"),
     route("dywt", "routes/pages/dywt/dywt.tsx"),
   ]),
+  route("api", "routes/pages/api-info.tsx"),
 ] satisfies RouteConfig;
