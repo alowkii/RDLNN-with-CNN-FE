@@ -40,12 +40,12 @@ batch_processor = None
 
 # Configuration
 config = {
-    'detection_model_path': '../data/models/rdlnn_model.pth',
-    'localization_model_path': '../data/models/localizer.pth',
-    'upload_folder': '../api/uploads',
+    'detection_model_path': './data/models/rdlnn_model.pth',
+    'localization_model_path': './data/models/localizer.pth',
+    'upload_folder': './api/uploads',
     'threshold': 0.675,
     'batch_size': 32,
-    'log_file': '../api/api_server.log'
+    'log_file': './api/api_server.log'
 }
 
 # Set up logging
@@ -1486,9 +1486,9 @@ def parse_args():
                         help='Run server in debug mode')
     
     # Model paths
-    parser.add_argument('--detection-model', type=str, default='../data/models/rdlnn_model.pth',
+    parser.add_argument('--detection-model', type=str, default='./data/models/rdlnn_model.pth',
                         help='Path to detection model')
-    parser.add_argument('--localization-model', type=str, default='../data/models/localizer.pth',
+    parser.add_argument('--localization-model', type=str, default='./data/models/localizer.pth',
                         help='Path to localization model')
     
     # Directories
