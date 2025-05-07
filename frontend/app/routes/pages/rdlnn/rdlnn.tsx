@@ -43,7 +43,7 @@ export default function RDLNN() {
     formData.append("image", image);
 
     try {
-      const response = await fetch(`${apiUrl}/api/detect`, {
+      const response = await fetch(`${apiUrl}/api/rdlnn/detect`, {
         method: "POST",
         body: formData,
       });
@@ -133,7 +133,7 @@ export default function RDLNN() {
               <span className="font-medium">Result:</span>
               <span
                 className={
-                  result.result === "defect"
+                  result.result.toLowerCase() === "forged"
                     ? "text-red-500 font-bold"
                     : "text-green-500 font-bold"
                 }
@@ -163,7 +163,9 @@ export default function RDLNN() {
               <div className="w-full bg-gray-700 rounded-full h-4">
                 <div
                   className={`h-4 rounded-full ${
-                    result.result === "defect" ? "bg-red-500" : "bg-green-500"
+                    result.result.toLowerCase() === "forged"
+                      ? "bg-red-500"
+                      : "bg-green-500"
                   }`}
                   style={{ width: `${Number(result.probability) * 100}%` }}
                 ></div>
