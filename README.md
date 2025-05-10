@@ -24,7 +24,7 @@ This repository contains a comprehensive framework for detecting and localizing 
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/image-forgery-detection.git
+   git clone https://github.com/alowkii/RDLNN-with-CNN-FE/
    cd image-forgery-detection
    ```
 
