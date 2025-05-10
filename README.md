@@ -6,7 +6,7 @@ This repository contains a comprehensive framework for detecting and localizing 
 
 - **Image Forgery Detection**: Classify images as authentic or forged with high precision
 - **Forgery Localization**: Identify and highlight specific regions of an image that have been tampered with
-- **PDyWT Feature Extraction**: Extract robust wavelet-based features that are effective for forgery detection
+- **Multiple Wavelet Transforms**: Support for traditional Discrete Wavelet Transform (DWT), Dyadic Wavelet Transform (DyWT), and Polar Dyadic Wavelet Transform (PDyWT)
 - **RDLNN Model Training**: Train specialized regression models optimized for imbalanced datasets
 - **REST API Server**: Deploy the detection system as a web service with comprehensive endpoints
 - **Batch Processing**: Efficiently process large image collections
@@ -22,12 +22,14 @@ This repository contains a comprehensive framework for detecting and localizing 
 ### Setup
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/yourusername/image-forgery-detection.git
    cd image-forgery-detection
    ```
 
 2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -40,6 +42,8 @@ This repository contains a comprehensive framework for detecting and localizing 
 ## Usage
 
 ### Feature Extraction
+
+#### PDyWT Features (Main Method)
 
 Extract PDyWT features from authentic and forged images:
 
@@ -56,6 +60,29 @@ Or extract features for a single directory:
 python tools/extract_pdywt_features.py \
   --input_dir path/to/images \
   --output_path data/features/test_features.npz
+```
+
+#### DWT Features
+
+Use the Discrete Wavelet Transform implementation:
+
+```bash
+python dwt/main.py train \
+  --authentic_dir path/to/authentic/images \
+  --forged_dir path/to/forged/images \
+  --model_path dwt_forgery_model.pkl
+```
+
+#### DyWT Features
+
+Use the Dyadic Wavelet Transform implementation:
+
+```bash
+python dywt/main.py train \
+  --authentic_dir path/to/authentic/images \
+  --forged_dir path/to/forged/images \
+  --model_path dyadic_forgery_model.pkl \
+  --decomp_level 3
 ```
 
 ### Training
@@ -99,6 +126,8 @@ python tools/train_localization.py \
 
 ### Testing
 
+#### Main Testing Method
+
 Test the model on individual images or directories:
 
 ```bash
@@ -119,6 +148,36 @@ python main.py \
   --input_dir path/to/test/images \
   --model_path data/models/rdlnn_model.pth \
   --output_dir data/results
+```
+
+#### DWT Testing
+
+Test images using the Discrete Wavelet Transform model:
+
+```bash
+python dwt/main.py test \
+  --model_path dwt_forgery_model.pkl \
+  --test_image path/to/image.jpg
+```
+
+#### DyWT Testing
+
+Test images using the Dyadic Wavelet Transform model:
+
+```bash
+python dywt/main.py test \
+  --model_path dyadic_forgery_model.pkl \
+  --test_image path/to/image.jpg \
+  --threshold 0.5
+```
+
+Or batch test a directory:
+
+```bash
+python dywt/main.py batch_test \
+  --model_path dyadic_forgery_model.pkl \
+  --test_dir path/to/test/images \
+  --output_csv results.csv
 ```
 
 ### Localization
@@ -186,32 +245,33 @@ npm start
 
 This will start the development server, typically accessible at http://localhost:3000.
 
-## Architecture
+## Core Components
 
-### PDyWT Feature Extraction
+### 1. Feature Extraction
 
-The Polar Dyadic Wavelet Transform (PDyWT) combines traditional wavelet decomposition with polar coordinate transformations to create rotation-invariant features. These features are particularly effective for detecting image manipulation.
+The system uses several feature extraction techniques:
 
-Key components:
-- Wavelet decomposition using Haar wavelets
-- Polar coordinate transformation for rotation invariance
-- Feature vector extraction using average pooling
+- **PDyWT Features**: Polar Dyadic Wavelet Transform combines traditional wavelet decomposition with polar coordinates for rotation invariance
+- **Error Level Analysis (ELA)**: Identifies inconsistencies in JPEG compression artifacts
+- **Noise Analysis**: Detects inconsistencies in image noise patterns
+- **DCT Features**: Analyzes Discrete Cosine Transform coefficients for manipulation detection
+- **JPEG Ghost Analysis**: Detects traces of previous JPEG compressions that may indicate manipulation
 
-### RDLNN Model
+### 2. Detection Model
 
-The Regression Deep Learning Neural Network (RDLNN) is specially designed to handle the imbalanced nature of forgery detection datasets. It includes:
+The RDLNN (Regression Deep Learning Neural Network) architecture is specially designed to handle the imbalanced nature of forgery detection datasets, with:
 
-- Batch normalization layers for stable training
+- Batch normalization for stable training
 - LeakyReLU activations for improved gradient flow
 - Dropout for regularization
 - Class weighting for handling imbalanced data
 - Threshold optimization for precision-recall tradeoff
 
-### Forgery Localization
+### 3. Localization Model
 
 The localization model uses a simplified U-Net architecture to generate pixel-wise predictions of potentially forged regions.
 
-## Project Structure
+## Directory Structure
 
 ```
 ├── api/                      # API server implementation
@@ -219,46 +279,73 @@ The localization model uses a simplified U-Net architecture to generate pixel-wi
 │   ├── features/             # Extracted features
 │   ├── models/               # Trained models
 │   └── results/              # Test results and visualizations
+├── dwt/                      # Discrete Wavelet Transform implementation
+│   ├── main.py               # DWT main entry point
+│   ├── train.py              # DWT model training
+│   ├── test.py               # DWT model testing
+│   ├── utils.py              # DWT utility functions
+│   └── report/               # DWT training reports
+├── dywt/                     # Dyadic Wavelet Transform implementation
+│   ├── main.py               # DyWT main entry point
+│   ├── train.py              # DyWT model training
+│   ├── test.py               # DyWT model testing
+│   ├── utils.py              # DyWT utility functions
+│   └── report/               # DyWT training reports
 ├── modules/                  # Core implementation modules
-│   ├── batch_processor.py    # Batch processing utilities
-│   ├── data_handling.py      # Data loading and processing
-│   ├── feature_extractor.py  # PDyWT feature extraction
-│   ├── model.py              # Model definitions
-│   ├── preprocessing.py      # Image preprocessing
-│   ├── rdlnn.py              # RDLNN implementation
-│   └── utils.py              # Utility functions
 ├── tools/                    # Utility scripts
-│   ├── combine_features.py   # Feature combination
-│   ├── extract_pdywt_features.py  # Feature extraction script
-│   ├── train_localization.py      # Localization model training
-│   └── train_pdywt_models.py      # PDyWT model training
 ├── training/                 # Training methods
-│   ├── balanced.py           # Balanced training approaches
-│   └── precision.py          # Precision-tuned training
 ├── main.py                   # Main entry point
 └── requirements.txt          # Python dependencies
 ```
 
-## Performance Tips
+## Wavelet Transform Implementations
 
-- Use GPU acceleration for training and feature extraction when available
-- Pre-extract features for large datasets to speed up training
-- Use batch processing for efficient evaluation of multiple images
-- Set an appropriate threshold (typically 0.7-0.8) to balance precision and recall
-- For large-scale deployment, consider using the API server with a front-end interface
+This system includes three different wavelet transform implementations:
 
-## Citation
+### Discrete Wavelet Transform (DWT)
 
-If you use this project in your research, please cite:
+The DWT implementation uses a traditional 2D wavelet decomposition with Haar wavelets. It extracts statistical features from wavelet coefficients including:
 
-```
-@software{image_forgery_detection,
-  author = {Your Name},
-  title = {Image Forgery Detection System},
-  year = {2023},
-  url = {https://github.com/yourusername/image-forgery-detection}
-}
-```
+- Mean, standard deviation, entropy, and energy of each subband
+- Simple classification with Random Forest
+
+Performance:
+
+- Accuracy: ~66.55%
+- Precision: 0.60
+- Recall: 0.48
+- F1-score: 0.53
+
+### Dyadic Wavelet Transform (DyWT)
+
+The DyWT implementation uses a multi-level wavelet decomposition with Daubechies wavelets (db4). It extracts:
+
+- Statistical features (mean, std, skewness, kurtosis, entropy, energy)
+- GLCM features (contrast, dissimilarity, homogeneity, energy, correlation)
+- Supports multiple decomposition levels
+
+Performance:
+
+- Accuracy: ~80.47%
+- Precision: 0.59
+- Recall: 0.27
+- F1-score: 0.37
+
+### Polar Dyadic Wavelet Transform (PDyWT)
+
+The PDyWT is the main implementation, combining wavelet decomposition with polar coordinate transformations to create rotation-invariant features. It includes:
+
+- YCbCr color space processing
+- Error Level Analysis (ELA)
+- Noise features
+- JPEG ghost detection
+- DCT features
+
+Performance:
+
+- Typically achieves higher accuracy and precision compared to the other methods
+- Optimized for imbalanced datasets
+- Supports localization in addition to detection
 
 ## License
 
