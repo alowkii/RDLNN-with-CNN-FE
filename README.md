@@ -341,11 +341,17 @@ The PDyWT is the main implementation, combining wavelet decomposition with polar
 - JPEG ghost detection
 - DCT features
 
-Performance:
+Performance metrics:
 
-- Typically achieves higher accuracy and precision compared to the other methods
-- Optimized for imbalanced datasets
-- Supports localization in addition to detection
+- ROC AUC: 0.968
+- PR AUC: 0.908
+- Accuracy: 96.17%
+- Precision: 0.9290
+- Recall: 0.9951
+- F1 Score: 0.9609
+- Specificity: 0.9232
+
+The RDLNN model with PDyWT features provides exceptional performance with high confidence levels (45.6% of predictions in high-confidence category) and minimal uncertainty (only 8.5% of samples in the uncertain range), making it particularly suitable for real-world forgery detection applications where reliable classification is required.
 
 ## License
 
