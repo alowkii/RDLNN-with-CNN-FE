@@ -1,4 +1,3 @@
-# dwt_forgery_detection.py
 import argparse
 import os
 import numpy as np
