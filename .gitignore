@@ -78,3 +78,6 @@ uploads/
 
 # models
 model/
+
+# test results
+comparative_test_results/
