@@ -42,8 +42,11 @@ def run_test(config, test_name, output_base_dir):
     output_dir = os.path.join(output_base_dir, f"{test_name}_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
     
+    # Get project root directory (parent of current directory)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     # Prepare command line arguments
-    cmd = ["python", "test_forgery_detection_comparative.py"]
+    cmd = [sys.executable, "test/test_forgery_detection_comparative.py"]
     
     # Add required arguments
     cmd.extend(["--test-dir", config["test_dir"]])
@@ -73,10 +76,10 @@ def run_test(config, test_name, output_base_dir):
     if config.get("multiple_forgery_test", False):
         cmd.append("--multiple-forgery-test")
     
-    # Run the test
+    # Run the test from the project root directory
     logger.info(f"Command: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=project_root)
         logger.info(f"Test completed successfully")
         
         # Save command output

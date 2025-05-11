@@ -38,6 +38,7 @@ from pathlib import Path
 
 # Add project root to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import DWT, DyWT, and RDLNN modules
 try:
