@@ -1,24 +1,24 @@
 {
-  "timestamp": "2025-05-12T00:21:23.318740",
+  "timestamp": "2025-05-12T00:24:27.287855",
   "config_file": "test_suite_config.json",
   "results": {
     "dataset_comofod": {
       "status": "failed",
-      "output_dir": "comparative_test_results\\dataset_comofod_20250512_002106",
+      "output_dir": "comparative_test_results\\dataset_comofod_20250512_002410",
       "error_code": 1,
-      "error_file": "comparative_test_results\\dataset_comofod_20250512_002106\\test_error.log"
+      "error_file": "comparative_test_results\\dataset_comofod_20250512_002410\\test_error.log"
     },
     "dataset_columbia": {
       "status": "failed",
-      "output_dir": "comparative_test_results\\dataset_columbia_20250512_002111",
+      "output_dir": "comparative_test_results\\dataset_columbia_20250512_002416",
       "error_code": 1,
-      "error_file": "comparative_test_results\\dataset_columbia_20250512_002111\\test_error.log"
+      "error_file": "comparative_test_results\\dataset_columbia_20250512_002416\\test_error.log"
     },
     "dataset_micc": {
       "status": "failed",
-      "output_dir": "comparative_test_results\\dataset_micc_20250512_002117",
+      "output_dir": "comparative_test_results\\dataset_micc_20250512_002421",
       "error_code": 1,
-      "error_file": "comparative_test_results\\dataset_micc_20250512_002117\\test_error.log"
+      "error_file": "comparative_test_results\\dataset_micc_20250512_002421\\test_error.log"
     }
   }
 }
