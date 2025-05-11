@@ -8,13 +8,13 @@
     "report_format": "markdown"
   },
   "tests": {
-    "dataset_comofod": {
-      "test_dir": "../data/test_datasets/comofod",
-      "description": "Test using CoMoFoD dataset (copy-move forgeries)"
-    },
     "dataset_columbia": {
       "test_dir": "../data/test_datasets/columbia",
       "description": "Test using Columbia dataset (splicing forgeries)"
+    },
+    "dataset_comofod": {
+      "test_dir": "../data/test_datasets/CoMoFoD_small_v2",
+      "description": "Test using CoMoFoD dataset (copy-move forgeries)"
     },
     "dataset_micc": {
       "test_dir": "../data/test_datasets/MICC-F220",
