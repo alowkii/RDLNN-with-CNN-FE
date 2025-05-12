@@ -986,39 +986,6 @@ def main():
     dwt_results = {}
     dywt_results = {}
     
-    # Test RDLNN model if available
-    if RDLNN_AVAILABLE and args.rdlnn_model and os.path.exists(args.rdlnn_model):
-        try:
-            logger.info(f"Loading RDLNN model from {args.rdlnn_model}")
-            # Load model with specific device
-            map_location = device if args.use_gpu and torch.cuda.is_available() else torch.device('cpu')
-            rdlnn_model = RegressionDLNN.load(args.rdlnn_model)
-            
-            # Make sure model is on the correct device
-            if args.use_gpu and torch.cuda.is_available():
-                rdlnn_model.model = rdlnn_model.model.to(device)
-                rdlnn_model.device = device
-                logger.info(f"RDLNN model loaded and moved to {device}")
-            
-            for dataset in test_datasets:
-                dataset_result = test_rdlnn_model(
-                    rdlnn_model, dataset, args.output_dir, 
-                    threshold=args.threshold, limit=args.test_limit,
-                    device=device
-                )
-                # Store results by dataset path
-                rdlnn_results[dataset] = dataset_result
-                
-                # Free GPU memory after each dataset
-                if args.use_gpu and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-        except Exception as e:
-            logger.error(f"Error testing RDLNN model: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    else:
-        logger.warning(f"RDLNN model not found or module not available: {args.rdlnn_model}")
-    
     # Test DWT model if available
     if DWT_AVAILABLE and args.dwt_model and os.path.exists(args.dwt_model):
         try:
@@ -1070,6 +1037,39 @@ def main():
             logger.error(traceback.format_exc())
     else:
         logger.warning(f"DyWT model not found or module not available: {args.dywt_model}")
+
+    # Test RDLNN model if available
+    if RDLNN_AVAILABLE and args.rdlnn_model and os.path.exists(args.rdlnn_model):
+        try:
+            logger.info(f"Loading RDLNN model from {args.rdlnn_model}")
+            # Load model with specific device
+            map_location = device if args.use_gpu and torch.cuda.is_available() else torch.device('cpu')
+            rdlnn_model = RegressionDLNN.load(args.rdlnn_model)
+            
+            # Make sure model is on the correct device
+            if args.use_gpu and torch.cuda.is_available():
+                rdlnn_model.model = rdlnn_model.model.to(device)
+                rdlnn_model.device = device
+                logger.info(f"RDLNN model loaded and moved to {device}")
+            
+            for dataset in test_datasets:
+                dataset_result = test_rdlnn_model(
+                    rdlnn_model, dataset, args.output_dir, 
+                    threshold=args.threshold, limit=args.test_limit,
+                    device=device
+                )
+                # Store results by dataset path
+                rdlnn_results[dataset] = dataset_result
+                
+                # Free GPU memory after each dataset
+                if args.use_gpu and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        except Exception as e:
+            logger.error(f"Error testing RDLNN model: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    else:
+        logger.warning(f"RDLNN model not found or module not available: {args.rdlnn_model}")
     
     # Create visualizations if requested
     if args.visualize and (rdlnn_results or dwt_results or dywt_results):
