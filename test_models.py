@@ -56,6 +56,18 @@ def setup_directories():
     
     return results_dir
 
+def parse_columbia(dataset_path):
+    authentic = []
+    forgery = []
+    for img_file in glob.glob(os.path.join(dataset_path, "*.tif")):
+        filename = os.path.basename(img_file).lower()
+        if filename.startswith("au"):  # Authentic
+            authentic.append(img_file)
+        elif filename.startswith("tp"):  # Tampered
+            forgery.append(img_file)
+    return {"authentic": authentic, "forgery": forgery}
+
+
 def find_test_datasets():
     """Find and organize test datasets"""
     # Look for dataset directories with format: data.test_datasets.NAME.TYPE
@@ -102,10 +114,11 @@ def find_test_datasets():
             
             # Find images
             type_path = os.path.join(dataset_path, type_dir)
-            image_files = []
+            image_files = set()
             for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tif', '*.tiff']:
-                image_files.extend(glob.glob(os.path.join(type_path, ext)))
-                image_files.extend(glob.glob(os.path.join(type_path, ext.upper())))
+                image_files.update(glob.glob(os.path.join(type_path, ext)))
+                image_files.update(glob.glob(os.path.join(type_path, ext.upper())))
+            image_files = list(image_files)
             
             # Skip empty directories
             if not image_files:
@@ -738,7 +751,7 @@ def main():
     results_dir = setup_directories()
     
     # Find test datasets
-    datasets = find_test_datasets()
+    datasets = find_test_datasets()    
     
     if not datasets:
         logger.error("No valid test datasets found")

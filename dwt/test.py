@@ -1,7 +1,7 @@
 # test.py
 import argparse
 import os
-from utils import extract_dwt_features, load_model
+from .utils import extract_dwt_features, load_model
 
 def detect_forgery(model, image_path):
     """

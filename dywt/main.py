@@ -1,9 +1,9 @@
 import argparse
 import os
 import numpy as np
-from utils import load_dataset, load_model, save_model
-from train import train_model, save_report
-from test import detect_forgery
+from .utils import load_dataset, load_model, save_model
+from .train import train_model, save_report
+from .test import detect_forgery
 
 def main():
     # Set up argument parser

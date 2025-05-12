@@ -2,7 +2,7 @@ import argparse
 import os
 import numpy as np
 import csv
-from utils import extract_dyadic_wavelet_features, load_model
+from .utils import extract_dyadic_wavelet_features, load_model
 
 def detect_forgery(model, image_path, threshold=0.5):
     """

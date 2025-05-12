@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
 from sklearn.preprocessing import StandardScaler
-from utils import load_dataset, save_model
+from .utils import load_dataset, save_model
 import os
 from datetime import datetime
 
