@@ -734,9 +734,9 @@ def main():
     parser = argparse.ArgumentParser(description="Test image forgery detection models")
     parser.add_argument("--model", choices=["all", "dwt", "dywt", "rdlnn"], default="all",
                        help="Model to test")
-    parser.add_argument("--dwt_model_path", default="data/models/dwt_forgery_model.pkl",
+    parser.add_argument("--dwt_model_path", default="dwt/model/dwt_model.pkl",
                        help="Path to DWT model")
-    parser.add_argument("--dywt_model_path", default="data/models/dyadic_forgery_model.pkl",
+    parser.add_argument("--dywt_model_path", default="dywt/model/dywt_model.pkl",
                        help="Path to DyWT model")
     parser.add_argument("--rdlnn_model_path", default="data/models/rdlnn_model.pth",
                        help="Path to RDLNN model")
