@@ -29,6 +29,12 @@ from modules.feature_extractor import PDyWTCNNDetector
 from modules.utils import setup_logging, logger
 from modules.batch_processor import OptimizedBatchProcessor
 
+# Import DWT and DyWT modules
+from dwt.utils import load_model as dwt_load_model
+from dwt.test import detect_forgery as dwt_detect_forgery
+from dywt.utils import load_model as dywt_load_model 
+from dywt.test import detect_forgery as dywt_detect_forgery
+
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable Cross-Origin Resource Sharing
@@ -37,13 +43,17 @@ CORS(app)  # Enable Cross-Origin Resource Sharing
 detection_model = None
 detector = None
 batch_processor = None
+dwt_model = None
+dywt_model = None
 
 # Configuration
 config = {
     'detection_model_path': './data/models/rdlnn_model.pth',
     'localization_model_path': './data/models/localizer.pth',
+    'dwt_model_path': './dwt/model/dwt_model.pkl',
+    'dywt_model_path': './dywt/model/dywt_model.pkl',
     'upload_folder': './api/uploads',
-    'threshold': 0.675,
+    'threshold': 0.55,
     'batch_size': 32,
     'log_file': './api/api_server.log'
 }
@@ -169,7 +179,7 @@ def initialize_models():
     Returns:
         bool: True if models initialized successfully, False otherwise
     """
-    global detection_model, detector, batch_processor
+    global detection_model, detector, batch_processor, dwt_model, dywt_model
     
     logger.info("Initializing models and processors...")
     
@@ -183,10 +193,12 @@ def initialize_models():
         # Log the model paths we're using
         logger.info(f"Using detection model path: {config['detection_model_path']}")
         logger.info(f"Using localization model path: {config['localization_model_path']}")
+        logger.info(f"Using DWT model path: {config['dwt_model_path']}")
+        logger.info(f"Using DyWT model path: {config['dywt_model_path']}")
         
-        # Check if the model file exists
+        # Check if the RDLNN model file exists
         if not os.path.exists(config['detection_model_path']):
-            logger.error(f"Model file not found: {config['detection_model_path']}")
+            logger.error(f"RDLNN Model file not found: {config['detection_model_path']}")
             return False
             
         # Initialize the detector with explicit model loading
@@ -226,10 +238,34 @@ def initialize_models():
                 logger.error("Failed to load RDLNN model in detector after explicit attempt")
                 return False
                 
-        except Exception as e:
-            logger.error(f"Error during explicit model loading: {e}")
+        except Exception as rdlnn_error:
+            logger.error(f"Error during explicit model loading: {rdlnn_error}")
             logger.error(traceback.format_exc())
             return False
+        
+        # Initialize DWT model
+        if os.path.exists(config['dwt_model_path']):
+            try:
+                dwt_model = dwt_load_model(config['dwt_model_path'])
+                logger.info(f"Successfully loaded DWT model from {config['dwt_model_path']}")
+            except Exception as e:
+                logger.error(f"Error loading DWT model: {e}")
+                logger.error(traceback.format_exc())
+                # We don't return False here because we want to continue with other models
+        else:
+            logger.warning(f"DWT model file not found: {config['dwt_model_path']}")
+        
+        # Initialize DyWT model
+        if os.path.exists(config['dywt_model_path']):
+            try:
+                dywt_model = dywt_load_model(config['dywt_model_path'])
+                logger.info(f"Successfully loaded DyWT model from {config['dywt_model_path']}")
+            except Exception as e:
+                logger.error(f"Error loading DyWT model: {e}")
+                logger.error(traceback.format_exc())
+                # We don't return False here because we want to continue with other models
+        else:
+            logger.warning(f"DyWT model file not found: {config['dywt_model_path']}")
         
         # If a specific threshold was provided in config, override the default
         if config['threshold'] is not None:
@@ -311,7 +347,9 @@ def system_status():
         model_status = {
             'detection_model_loaded': detector is not None,
             'threshold': config['threshold'],
-            'batch_processor': batch_processor is not None
+            'batch_processor': batch_processor is not None,
+            'dwt_model_loaded': dwt_model is not None,
+            'dywt_model_loaded': dywt_model is not None
         }
         
         # Combined status
@@ -367,6 +405,18 @@ def get_models_info():
                 'filename': os.path.basename(config['localization_model_path']),
                 'loaded': detector is not None,
                 'type': 'PDyWTCNN Localizer'
+            },
+            'dwt': {
+                'path': config['dwt_model_path'],
+                'filename': os.path.basename(config['dwt_model_path']),
+                'loaded': dwt_model is not None,
+                'type': 'DWT'
+            },
+            'dywt': {
+                'path': config['dywt_model_path'],
+                'filename': os.path.basename(config['dywt_model_path']),
+                'loaded': dywt_model is not None,
+                'type': 'DyWT'
             }
         }
         
@@ -1170,6 +1220,174 @@ def run_localization_script():
             'error': str(e),
             'traceback': traceback.format_exc()
         }), 500
+    
+@app.route('/api/dwt/detect', methods=['POST'])
+def dwt_detect():
+    """Detect forgery using the DWT model"""
+    if not dwt_model:
+        return jsonify({'error': 'DWT model not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Process the image
+        start_time = time.time()
+        prediction = dwt_detect_forgery(dwt_model, filepath)
+        end_time = time.time()
+        
+        # Get the original image as base64
+        original_image_base64 = image_to_base64(filepath)
+        
+        # Determine result
+        if prediction is None:
+            return jsonify({
+                'error': 'Could not process image',
+                'filename': filename
+            }), 500
+            
+        result_type = 'forged' if prediction == 1 else 'authentic'
+        
+        # Format the result data
+        result_data = {
+            'image': filename,
+            'result': result_type,
+            'prediction': int(prediction),
+            'processing_time': f"{end_time - start_time:.4f}",
+            'timestamp': datetime.now().isoformat(),
+            'model': 'DWT'
+        }
+        
+        # Format result text
+        result_text = format_dict_to_text(result_data)
+        
+        # Create response
+        run_id = f"run_{int(time.time())}"
+        response = {
+            'run_id': run_id,
+            'filename': filename,
+            'result': result_type,
+            'prediction': int(prediction),
+            'processing_time': end_time - start_time,
+            'timestamp': int(time.time()),
+            'original_image_base64': original_image_base64,
+            'result_text': result_text
+        }
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in DWT forgery detection: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/dywt/detect', methods=['POST'])
+def dywt_detect():
+    """Detect forgery using the DyWT model"""
+    if not dywt_model:
+        return jsonify({'error': 'DyWT model not initialized'}), 500
+    
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    try:
+        # Get the uploaded file
+        file = request.files['image']
+        
+        # Save the file temporarily
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(config['upload_folder'], filename)
+        file.save(filepath)
+        
+        # Get threshold parameter if provided
+        threshold = request.form.get('threshold')
+        if threshold:
+            try:
+                threshold = float(threshold)
+            except ValueError:
+                threshold = 0.5
+        else:
+            threshold = 0.5
+        
+        # Process the image
+        start_time = time.time()
+        prediction, probability = dywt_detect_forgery(dywt_model, filepath, threshold=threshold)
+        end_time = time.time()
+        
+        # Get the original image as base64
+        original_image_base64 = image_to_base64(filepath)
+        
+        # Determine result
+        if prediction is None:
+            return jsonify({
+                'error': 'Could not process image',
+                'filename': filename
+            }), 500
+            
+        result_type = 'forged' if prediction == 1 else 'authentic'
+        
+        # Format the result data
+        result_data = {
+            'image': filename,
+            'result': result_type,
+            'prediction': int(prediction),
+            'probability': f"{float(probability):.4f}",
+            'threshold': f"{float(threshold):.4f}",
+            'processing_time': f"{end_time - start_time:.4f}",
+            'timestamp': datetime.now().isoformat(),
+            'model': 'DyWT'
+        }
+        
+        # Format result text
+        result_text = format_dict_to_text(result_data)
+        
+        # Create response
+        run_id = f"run_{int(time.time())}"
+        response = {
+            'run_id': run_id,
+            'filename': filename,
+            'result': result_type,
+            'prediction': int(prediction),
+            'probability': float(probability),
+            'threshold': float(threshold),
+            'processing_time': end_time - start_time,
+            'timestamp': int(time.time()),
+            'original_image_base64': original_image_base64,
+            'result_text': result_text
+        }
+        
+        # Clean up the temporary file
+        try:
+            os.remove(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {filepath}: {e}")
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error in DyWT forgery detection: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 @app.route('/api/rdlnn/detect', methods=['POST'])
 def rdlnn_detect():
@@ -1496,7 +1714,7 @@ def parse_args():
                         help='Temporary folder for uploaded images')
     
     # Processing parameters
-    parser.add_argument('--threshold', type=float, default=0.675,
+    parser.add_argument('--threshold', type=float, default=0.55,
                         help='Detection threshold')
     parser.add_argument('--batch-size', type=int, default=8,
                         help='Batch size for processing')
